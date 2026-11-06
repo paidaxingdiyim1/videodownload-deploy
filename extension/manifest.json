@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
   "name": "网页视频下载器 · 本地解密版",
-  "version": "1.1.0",
-  "description": "在网页每个视频旁浮出下载按钮，自动识别 HLS/DASH/MP4 资源，交给本机服务解密下载。",
+  "version": "1.2.0",
+  "description": "在网页每个视频旁浮出下载按钮，自动识别 HLS/DASH/MP4 资源，交给本机或局域网服务器解密下载。",
   "minimum_chrome_version": "110",
   "permissions": [
     "webRequest",
     "storage",
     "tabs",
     "cookies",
-    "scripting"
+    "scripting",
+    "alarms",
+    "downloads",
+    "notifications"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {

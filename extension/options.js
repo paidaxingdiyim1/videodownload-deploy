@@ -86,8 +86,72 @@ async function pairOne(target, el) {
   }
 }
 
+/* ------------------------------ 更新 ------------------------------ */
+
+function setResult(msg, ok) {
+  const el = $('#update-result');
+  el.className = 'result ' + (ok ? 'ok' : 'bad');
+  el.textContent = msg;
+}
+
+async function renderUpdate() {
+  $('#frontend-ver').textContent = '检查中…';
+  $('#backend-ver').textContent = '检查中…';
+  const r = await send({ type: 'update:check', target: 'server' });
+  if (!r || !r.ok) { $('#frontend-ver').textContent = '—'; $('#backend-ver').textContent = '—'; return; }
+  const f = r.frontend || {};
+  const b = r.backend || {};
+  if (f.ok) {
+    const span = document.createElement('span');
+    span.textContent = `当前 v${f.current} · 最新 v${f.latest} ${f.newer ? '· 有新版本' : '· 已是最新'}`;
+    $('#frontend-ver').textContent = '';
+    $('#frontend-ver').appendChild(span);
+    if (f.newer) { $('#frontend-ver').classList.add('new'); }
+  } else {
+    $('#frontend-ver').textContent = '检测失败：' + (f.error || '网络不可达');
+  }
+  if (b.ok) {
+    const behind = b.behind || 0;
+    const t = `服务器 v${b.version}（${b.commit || ''}）· 落后 ${behind} 个提交${behind > 0 ? '，可更新' : '，已是最新'}`;
+    const span = document.createElement('span');
+    span.textContent = t;
+    $('#backend-ver').textContent = '';
+    $('#backend-ver').appendChild(span);
+  } else {
+    $('#backend-ver').textContent = '检测失败：' + (b.error || '服务未连接');
+  }
+}
+
+async function doUpdateBackend() {
+  setResult('正在更新后端…', true);
+  const r = await send({ type: 'update:backend', target: 'server' });
+  if (r && r.ok) {
+    setResult('后端已更新并重启（约数秒后恢复连接）', true);
+    setTimeout(renderUpdate, 6000);
+  } else {
+    setResult('更新失败：' + ((r && r.error) || '未知错误'), false);
+  }
+}
+
+async function doUpdateFrontend() {
+  setResult('正在下载最新前端包…', true);
+  const r = await send({ type: 'update:frontend' });
+  if (r && r.ok) {
+    setResult(`已开始下载 v${r.version} 扩展包，解压后在 chrome://extensions 里「重新加载」`, true);
+  } else {
+    setResult('下载失败：' + ((r && r.error) || '未知错误'), false);
+  }
+}
+
 $('#save').addEventListener('click', save);
 $('#test').addEventListener('click', test);
 $('#pairServer').addEventListener('click', () => pairOne('server', $('#test-result')));
 $('#pairLocal').addEventListener('click', () => pairOne('local', $('#test-result')));
-document.addEventListener('DOMContentLoaded', load);
+$('#checkFrontend').addEventListener('click', renderUpdate);
+$('#checkBackend').addEventListener('click', renderUpdate);
+$('#updateBackend').addEventListener('click', doUpdateBackend);
+$('#updateFrontend').addEventListener('click', doUpdateFrontend);
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  renderUpdate();
+});

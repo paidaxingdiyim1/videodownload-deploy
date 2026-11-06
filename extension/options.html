@@ -84,6 +84,29 @@
     </section>
 
     <section class="card">
+      <h2>更新</h2>
+      <div class="field">
+        <label>前端（浏览器扩展）</label>
+        <div class="row">
+          <span class="grow ver" id="frontend-ver">检查中…</span>
+          <button id="checkFrontend" class="btn">检查</button>
+          <button id="updateFrontend" class="btn primary">更新前端</button>
+        </div>
+        <p class="hint">更新前端 = 下载最新扩展包到本地，解压后在 <code>chrome://extensions</code> 里「重新加载」（或覆盖原 extension 文件夹后刷新）。</p>
+      </div>
+      <div class="field">
+        <label>后端（服务器）</label>
+        <div class="row">
+          <span class="grow ver" id="backend-ver">检查中…</span>
+          <button id="checkBackend" class="btn">检查</button>
+          <button id="updateBackend" class="btn primary">更新后端</button>
+        </div>
+        <p class="hint">更新后端 = 让服务器从公开仓库 <code>git pull</code> 并自动重启（服务器需按 DEPLOY.md 以 git 方式部署）。</p>
+      </div>
+      <div class="row actions"><span id="update-result" class="result"></span></div>
+    </section>
+
+    <section class="card">
       <h2>说明</h2>
       <ul class="notes">
         <li>支持 HLS（m3u8，含 AES-128 加密分片）、DASH、直链 MP4/WebM 等。</li>

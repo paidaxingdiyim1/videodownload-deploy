@@ -11,7 +11,7 @@ const tasks = require('./tasks');
 const ytdlp = require('./ytdlp');
 const util = require('./util');
 
-const VERSION = '1.0.0';
+const VERSION = '1.2.0';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -120,6 +120,83 @@ function readBody(req, limit = 2 * 1024 * 1024) {
     });
     req.on('error', reject);
   });
+}
+
+/* ----------------------------- 自更新 ----------------------------- */
+
+const GIT_DIR = config.ROOT;
+
+function runGit(args, opts = {}) {
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd: GIT_DIR, timeout: opts.timeout || 30000 }, (err, stdout, stderr) => {
+      resolve({ ok: !err, code: err ? err.code : 0, out: (stdout || '').trim(), err: (stderr || '').trim() });
+    });
+  });
+}
+
+function isGitDeployment() {
+  return fs.existsSync(path.join(GIT_DIR, '.git'));
+}
+
+async function gitInfo() {
+  if (!isGitDeployment()) return null;
+  const [rev, remote] = await Promise.all([
+    runGit(['rev-parse', '--short', 'HEAD']),
+    runGit(['config', '--get', 'remote.origin.url']),
+  ]);
+  return { commit: rev.ok ? rev.out : '', remote: remote.ok ? remote.out : '' };
+}
+
+/** 检查公开仓库是否有新提交（自动检测） */
+async function checkUpdate() {
+  const info = await gitInfo();
+  if (!info) return { ok: false, error: '当前不是 git 部署（缺少 .git 目录），无法在线更新' };
+  const fetch = await runGit(['fetch', 'origin', '--quiet'], { timeout: 45000 });
+  if (!fetch.ok) return { ok: false, error: 'git fetch 失败：' + (fetch.err || ('code ' + fetch.code)) };
+  const [behind, latest] = await Promise.all([
+    runGit(['rev-list', '--count', 'HEAD..origin/main']),
+    runGit(['rev-parse', '--short', 'origin/main']),
+  ]);
+  return {
+    ok: true,
+    version: VERSION,
+    commit: info.commit,
+    remote: info.remote,
+    latestCommit: latest.ok ? latest.out : '',
+    behind: behind.ok ? parseInt(behind.out || '0', 10) : 0,
+    branch: 'main',
+  };
+}
+
+/** 执行 git pull（仅快进），成功后触发重启 */
+async function doUpdate() {
+  const info = await gitInfo();
+  if (!info) return { ok: false, error: '当前不是 git 部署（缺少 .git 目录），无法在线更新' };
+  const status = await runGit(['status', '--porcelain']);
+  const dirty = status.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('??'));
+  if (dirty.length) {
+    return { ok: false, error: '服务器上有未提交的本地改动，请先处理再更新：' + dirty.slice(0, 3).join('；') };
+  }
+  const pull = await runGit(['pull', '--ff-only', 'origin', 'main'], { timeout: 90000 });
+  if (!pull.ok) return { ok: false, error: 'git pull 失败：' + (pull.err || pull.out || ('code ' + pull.code)) };
+  return { ok: true, updated: true, out: (pull.out || pull.err || '').split('\n').slice(0, 6).join(' | ') };
+}
+
+function restartAfterUpdate() {
+  console.log('[update] 代码已更新，即将重启服务…');
+  if (process.env.WVD_SUPERVISED) {
+    // 有守护进程（systemd / 循环脚本）时直接退出，由守护进程拉起新版本
+    setTimeout(() => process.exit(0), 300);
+    return;
+  }
+  // 无守护进程时：另起一个进程再退出当前进程（尽力而为）
+  try {
+    const child = spawn(process.execPath, process.argv.slice(1), {
+      cwd: process.cwd(), detached: true, stdio: 'ignore',
+    });
+    child.unref();
+  } catch (_) {}
+  setTimeout(() => process.exit(0), 900);
 }
 
 /* ----------------------------- 路由 ----------------------------- */
@@ -325,6 +402,20 @@ const server = http.createServer(async (req, res) => {
       walk(root, '', 0);
       out.sort((a, b) => b.mtime - a.mtime);
       return send(res, 200, { ok: true, dir: cfg.downloadDir, files: out }, cors);
+    }
+
+    /* ---- 自更新：检查公开仓库是否有新版本 ---- */
+    if (pathname === '/api/update/check' && req.method === 'GET') {
+      const r = await checkUpdate();
+      return send(res, 200, r, cors);
+    }
+
+    /* ---- 自更新：git pull + 重启 ---- */
+    if (pathname === '/api/update' && req.method === 'POST') {
+      const r = await doUpdate();
+      send(res, r.ok ? 200 : 500, r, cors);
+      if (r.ok) setTimeout(restartAfterUpdate, 400);
+      return;
     }
 
     /* ---- SSE 实时进度 ---- */

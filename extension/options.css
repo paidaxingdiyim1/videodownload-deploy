@@ -40,6 +40,10 @@ input[type=number] { max-width: 130px; }
 .btn.primary { background: #2b6cff; border-color: #2b6cff; color: #fff; }
 .btn.primary:hover { background: #1f5bea; }
 .actions { margin-top: 4px; }
+.grow { flex: 1; }
+.ver { font-size: 12px; color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ver .new { color: #c22b2f; font-weight: 600; }
+.ver .ok { color: #0f8a4d; }
 .result { font-size: 12px; color: #6b7280; }
 .result.ok { color: #0f8a4d; }
 .result.bad { color: #c22b2f; }

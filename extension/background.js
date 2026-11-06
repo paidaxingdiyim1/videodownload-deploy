@@ -26,6 +26,11 @@ const DEFAULT_CONFIG = {
 const MEDIA_RE = /\.(m3u8|mpd|mp4|webm|flv|m4v|mov|mkv|m4a|mp3|aac)(\?|#|$)/i;
 const IGNORE_RE = /\.(ts|m4s|aac\.seg|jpg|jpeg|png|gif|webp|svg|css|js|json|html?)(\?|#|$)/i;
 
+/* 公开仓库（自更新来源），前端版本号与最新包都从这里取 */
+const REPO_RAW = 'https://raw.githubusercontent.com/paidaxingdiyim1/videodownload-deploy/main';
+const REPO_ZIP = 'https://github.com/paidaxingdiyim1/videodownload-deploy/archive/refs/heads/main.zip';
+const EXT_VERSION = chrome.runtime.getManifest().version;
+
 /** tabId -> Map(url -> entry) */
 const mediaByTab = new Map();
 /** tabId -> 页面标题 */
@@ -172,6 +177,70 @@ async function health(target) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/* ------------------------------ 自更新 ------------------------------ */
+
+function compareVersion(a, b) {
+  const pa = String(a || '').split('.').map((n) => parseInt(n || '0', 10));
+  const pb = String(b || '').split('.').map((n) => parseInt(n || '0', 10));
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+/** 检查前端（扩展）最新版本：从公开仓库读 manifest */
+async function checkFrontend() {
+  try {
+    const res = await fetch(`${REPO_RAW}/extension/manifest.json`, { cache: 'no-store' });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const m = await res.json();
+    const latest = m.version || '';
+    return { ok: true, current: EXT_VERSION, latest, newer: compareVersion(latest, EXT_VERSION) > 0 };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
+/** 检查后端（服务器）更新 */
+async function checkBackend(target) {
+  try {
+    return await api('/api/update/check', { timeout: 15000, target });
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
+/** 更新后端：让服务器 git pull 自公开仓库并重启 */
+async function updateBackend(target) {
+  try {
+    return await api('/api/update', { method: 'POST', timeout: 120000, target });
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
+/** 更新前端：下载最新扩展包到本地，由用户解压后重新加载 */
+async function updateFrontend() {
+  const c = await checkFrontend();
+  const v = (c.ok && c.latest) ? c.latest : 'latest';
+  return new Promise((resolve) => {
+    chrome.downloads.download({
+      url: REPO_ZIP,
+      filename: `videodownload-extension-v${v}.zip`,
+      conflictAction: 'uniquify',
+      saveAs: true,
+    }, (id) => {
+      if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+      else resolve({ ok: true, downloadId: id, version: v });
+    });
+  });
+}
+
+function clearUpdateBadge() {
+  chrome.action.setBadgeText({ text: '' }).catch(() => {});
 }
 
 /* ------------------------------ 媒体嗅探 ------------------------------ */
@@ -477,6 +546,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           cachedToken = { server: cfg.serverToken || '', local: cfg.localToken || '' };
           return sendResponse({ ok: true, config: cfg });
         }
+        case 'update:check': {
+          clearUpdateBadge();
+          const [b, f] = await Promise.all([checkBackend(msg.target), checkFrontend()]);
+          if (f.ok && f.newer) {
+            chrome.action.setBadgeText({ text: '↑' }).catch(() => {});
+            chrome.action.setBadgeBackgroundColor({ color: '#e5484d' }).catch(() => {});
+          }
+          return sendResponse({ ok: true, backend: b, frontend: f });
+        }
+        case 'update:backend': {
+          return sendResponse(await updateBackend(msg.target));
+        }
+        case 'update:frontend': {
+          return sendResponse(await updateFrontend());
+        }
+        case 'update:clear-badge': {
+          clearUpdateBadge();
+          return sendResponse({ ok: true });
+        }
         default:
           return sendResponse({ ok: false, error: '未知消息类型: ' + msg.type });
       }
@@ -493,4 +581,22 @@ chrome.runtime.onInstalled.addListener(async () => {
   // 两个端点都尝试预配对（本机/服务器若在线则直接拿到 Token）
   pair('server').catch(() => {});
   pair('local').catch(() => {});
+  // 建立自动更新检测：首次延迟 1 分钟后查一次，此后每 6 小时一次
+  chrome.alarms.create('wvd-update-check', { delayInMinutes: 1, periodInMinutes: 360 });
+});
+
+/* 自动检测更新：前端（扩展）有新版本时打徽标 + 通知 */
+chrome.alarms.onAlarm.addListener(async (a) => {
+  if (a.name !== 'wvd-update-check') return;
+  const f = await checkFrontend();
+  if (!f.ok || !f.newer) return;
+  chrome.action.setBadgeText({ text: '↑' }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ color: '#e5484d' }).catch(() => {});
+  chrome.notifications.create('wvd-update', {
+    type: 'basic',
+    iconUrl: 'icons/icon48.png',
+    title: '网页视频下载器有新版本',
+    message: `当前 v${f.current}，最新 v${f.latest}。到扩展设置页点「更新前端」即可。`,
+    priority: 2,
+  }).catch(() => {});
 });

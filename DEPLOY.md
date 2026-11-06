@@ -16,6 +16,26 @@
 
 ## 服务器端
 
+> **一律从公开仓库部署**：`https://github.com/paidaxingdiyim1/videodownload-deploy.git`。不要用旧的私有/个人仓库，保证服务器上的代码就是公开的那一份，且能在线 `git pull` 更新。
+
+### Linux 服务器（推荐，一键部署 + 开机自启）
+
+```bash
+git clone https://github.com/paidaxingdiyim1/videodownload-deploy.git
+cd videodownload-deploy
+bash deploy/linux/install.sh
+```
+
+脚本会自动：从公开仓库克隆/更新 → 定位 node（nvm / PATH）→ 生成守护脚本 `~/wvd-service.sh`（崩溃自动重启、自更新后自动拉起）→ 用用户级 crontab 实现开机自启（**无需 sudo**）→ 立即后台启动。之后：
+
+```bash
+cat server/config.json            # 看 Token
+tail -f ~/wvd-service.log         # 看日志
+bash deploy/linux/install.sh      # 手动更新（或扩展设置页点「更新后端」）
+```
+
+> 装成 systemd 服务的方式见下方「systemd 常驻」；Docker 方式见「Docker」。无论哪种，代码都必须从上面的公开仓库 clone。
+
 ### Windows 服务器
 
 1. 安装 **Node.js 18+**（https://nodejs.org/ ，装完 `node -v` 能出版本号即可）
@@ -59,14 +79,7 @@ powershell -ExecutionPolicy Bypass -File uninstall-service.ps1
 
 > 备选方案：用 [NSSM](https://nssm.cc/) 把 `node server\src\server.js --host=0.0.0.0 --no-open` 注册成真正的 Windows 服务（`nssm install WebVideoDownloader`），带崩溃自动重启；或使用「任务计划程序」图形界面手工建任务。
 
-### Linux 服务器
-
-```bash
-git clone https://github.com/paidaxingdiyim1/videodownload-deploy.git
-cd videodownload-deploy
-chmod +x start.sh start-lan.sh
-./start-lan.sh            # 等价于 node server/src/server.js --host=0.0.0.0
-```
+### systemd 常驻（Linux 可选，需 root）
 
 放行端口（以 ufw 为例）：
 
@@ -125,6 +138,23 @@ docker logs videodownload            # 看 Token
   "lanAllowedOrigins": ["*", "http://intra.example.com"]
   ```
 - 请勿把该服务直接暴露到公网；如必须，请在前面加反向代理并限制访问来源。
+
+## 在线更新（自更新）
+
+代码在公开仓库里，更新不需要再手动 SSH 到服务器。
+
+- **更新后端（服务器）**：扩展设置页「更新后端」→ 服务器执行 `git pull`（仅快进）→ 自动重启。也可在服务器上直接跑 `bash deploy/linux/install.sh`。
+- **更新前端（扩展）**：扩展设置页「更新前端」→ 下载最新扩展包 → 解压后到 `chrome://extensions`「重新加载」。
+- **自动检测**：扩展每 6 小时自动比对公开仓库里的前端版本号，有新版本会在图标上标「↑」并弹通知。
+
+> 要求：服务器上的代码必须是 `git clone` 出来的（有 `.git` 目录、origin 指向公开仓库）。自更新接口需要 Token 鉴权，且只接受快进合并——服务器上若有未提交改动会拒绝更新并提示，防止覆盖你的本地修改。
+
+相关接口（均需 Token）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/update/check` | 检查公开仓库是否有新提交（返回落后提交数） |
+| POST | `/api/update` | 执行 `git pull --ff-only` 并重启 |
 
 ## 客户端（局域网内各电脑的浏览器扩展）
 

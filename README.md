@@ -30,6 +30,7 @@
 | **自动转封装** | 有 ffmpeg 时 TS→MP4、音视频轨合并；没有则保留 .ts（PotPlayer / VLC 可播） |
 | **登录可见视频** | 自动带上页面的 Cookie、Referer、User-Agent |
 | **保存位置可选** | 视频可保存到局域网服务器或本机：扩展弹窗一键切换、设置里改默认、或每次下载时弹出「服务器 / 本机」菜单 |
+| **在线自更新** | 扩展内置「更新后端 / 更新前端」：后端从公开仓库 git pull 自重启，前端下载最新扩展包，并自动检测新版本 |
 | **零依赖服务** | 服务端只用 Node 标准库，不装任何 npm 包也能跑 |
 
 ## 快速开始
@@ -57,7 +58,7 @@ chmod +x start.sh && ./start.sh
 node server/src/server.js
 ```
 
-要把服务部署到**局域网服务器**（其他电脑的扩展也连它），改用 `start-lan.bat` / `start-lan.sh`（监听所有网卡，强制 Token）；要做成**开机自启的常驻服务**，用 `deploy/windows-service/install-service.ps1`（Windows）或 systemd（Linux）。详见 [DEPLOY.md](DEPLOY.md)。
+要把服务部署到**局域网服务器**（其他电脑的扩展也连它），Linux 一键 `bash deploy/linux/install.sh`（开机自启 + 在线更新），Windows 用 `start-lan.bat` 或 `deploy/windows-service/install-service.ps1`。详见 [DEPLOY.md](DEPLOY.md)。
 
 启动成功长这样：
 
@@ -189,6 +190,8 @@ node build/test-exe.js     # 验证：启动 / 识别工具 / 直链下载 / yt-
 | GET | `/api/events` | SSE 实时进度 |
 | GET | `/api/config` | 读取配置 |
 | GET | `/api/files` | 列出 `downloadDir` 下的文件（含带 Token 的取回链接），局域网部署取回文件用 |
+| GET | `/api/update/check` | 检查公开仓库是否有新提交 |
+| POST | `/api/update` | 从公开仓库 `git pull` 并重启 |
 
 ## 目录结构
 
@@ -219,6 +222,9 @@ scripts/              辅助脚本
   make-icons.js       扩展图标生成
   make-ico.js         多尺寸 PNG → assets/app.ico
   make-bat.js         生成 start.bat，并断言「纯 ASCII + CRLF」
+deploy/               部署脚本
+  linux/install.sh    Linux 一键部署（公开仓库克隆 + 守护循环 + crontab 自启）
+  windows-service/    Windows 计划任务常驻（install/uninstall）
 assets/app.ico        应用图标
 ```
 
