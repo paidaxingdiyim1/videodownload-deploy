@@ -360,6 +360,7 @@ async function renderFiles() {
           <span class="sz">${fmtSize(f.size)}</span>
           <button class="btn" data-play="${esc(streamUrl)}">播放</button>
           <a class="btn" href="${esc(baseHost + (f.url || '/'))}" target="_blank">下载</a>
+          <button class="btn danger" data-del="${esc(full)}" data-target="${g.target}">删除</button>
         </div>`);
       }
     }
@@ -367,6 +368,15 @@ async function renderFiles() {
   el.innerHTML = lines.join('');
   el.querySelectorAll('[data-play]').forEach((b) => {
     b.addEventListener('click', () => chrome.tabs.create({ url: b.dataset.play }));
+  });
+  el.querySelectorAll('[data-del]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      if (!window.confirm('确定删除该文件？删除后不可恢复。\n\n' + b.dataset.del)) return;
+      b.textContent = '…';
+      const r = await send({ type: 'file:delete', filePath: b.dataset.del, target: b.dataset.target });
+      if (r && r.ok) renderFiles();
+      else { b.textContent = '删除'; alert((r && r.error) || '删除失败'); }
+    });
   });
 }
 

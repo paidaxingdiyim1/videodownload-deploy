@@ -88,4 +88,6 @@ input[type=number] { max-width: 130px; }
 .fileline .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fileline .sz { flex: 0 0 auto; color: #9aa0a6; font-size: 11.5px; }
 .fileline .btn { height: 25px; padding: 0 9px; font-size: 11.5px; }
+.btn.danger { color: #c22b2f; border-color: #f3d2d3; }
+.btn.danger:hover { background: #fdf0f0; border-color: #e5a3a5; color: #a71d22; }
 

@@ -523,6 +523,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const streamUrl = base + '/api/stream?path=' + encodeURIComponent(filePath) + '&token=' + encodeURIComponent(token);
           return sendResponse({ ok: true, target, filePath, streamUrl, address: base + ' · ' + filePath });
         }
+        case 'file:delete': {
+          try {
+            const data = await api('/api/delete-file?path=' + encodeURIComponent(msg.filePath), { method: 'POST', target: msg.target, timeout: 15000 });
+            return sendResponse(data);
+          } catch (e) {
+            return sendResponse({ ok: false, error: String(e && e.message || e) });
+          }
+        }
         case 'files': {
           // 列出服务器 + 本机的下载目录内容（用于设置页「下载中心」）
           const results = await Promise.allSettled([

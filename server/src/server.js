@@ -11,7 +11,7 @@ const tasks = require('./tasks');
 const ytdlp = require('./ytdlp');
 const util = require('./util');
 
-const VERSION = '1.4.0';
+const VERSION = '1.4.1';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -499,6 +499,23 @@ const server = http.createServer(async (req, res) => {
         'Cache-Control': 'no-store',
       });
       return fs.createReadStream(file).pipe(res);
+    }
+
+    /* ---- 删除下载目录里的文件 ---- */
+    if (pathname === '/api/delete-file' && req.method === 'POST') {
+      const file = url.searchParams.get('path');
+      const root = path.resolve(cfg.downloadDir);
+      if (!file || !path.resolve(file).startsWith(root + path.sep)) {
+        return send(res, 400, { ok: false, error: '路径不合法' }, cors);
+      }
+      try {
+        const st = fs.statSync(file);
+        if (!st.isFile()) return send(res, 400, { ok: false, error: '只能删除文件' }, cors);
+        fs.unlinkSync(file);
+        return send(res, 200, { ok: true }, cors);
+      } catch (e) {
+        return send(res, 404, { ok: false, error: '删除失败：' + e.message }, cors);
+      }
     }
 
     return send(res, 404, { ok: false, error: 'Not found' }, cors);
