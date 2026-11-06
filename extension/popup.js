@@ -245,10 +245,8 @@ async function init() {
   $('#folder').addEventListener('click', () => send({ type: 'openFolder', target: saveTarget }));
   $('#options').addEventListener('click', () => chrome.runtime.openOptionsPage());
 
-  setInterval(async () => {
-    const t = await send({ type: 'tasks' });
-    if (t.ok) { tasks = t.tasks || []; renderTasks(); renderMedia(); }
-  }, 1200);
+  // 周期刷新：任务进度 + 媒体列表（时长指纹配对会异步更新「当前」指向）
+  setInterval(refresh, 1200);
 }
 
 document.addEventListener('DOMContentLoaded', init);

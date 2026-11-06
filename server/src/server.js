@@ -10,8 +10,9 @@ const config = require('./config');
 const tasks = require('./tasks');
 const ytdlp = require('./ytdlp');
 const util = require('./util');
+const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.0';
+const VERSION = '1.5.1';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -332,6 +333,15 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, { ok: true, info, tools }, cors);
+    }
+
+    /* ---- 批量时长探测（MSE blob 配对指纹） ---- */
+    if (pathname === '/api/probe-durations' && req.method === 'POST') {
+      const body = await readBody(req);
+      const urls = Array.isArray(body.urls) ? body.urls.filter((u) => /^https?:/i.test(u)) : [];
+      if (!urls.length) return send(res, 400, { ok: false, error: '缺少 urls' }, cors);
+      const results = await probeDurations(urls, body);
+      return send(res, 200, { ok: true, results }, cors);
     }
 
     /* ---- 打开下载目录 ---- */

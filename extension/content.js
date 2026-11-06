@@ -130,6 +130,8 @@
         src: best.v.currentSrc,
         // blob: 地址的创建时刻——后台用它把 blob 精确配对到真实网络流
         blobT: state.blobTimes.get(best.v.currentSrc) || 0,
+        // 正在播放视频的精确时长——后台拿它当指纹让服务器 ffprobe 配对（最可靠）
+        duration: Number.isFinite(best.v.duration) ? best.v.duration : 0,
         // 用「正在播放的这个视频」所在卡片里的描述作为标题（而非全局第一个）
         title: siteTitle(best.v) || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, '')) || '',
         // 信息流站点：弹窗只显示当前视频的链接（防堆积，只识别正在播放的）

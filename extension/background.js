@@ -54,6 +54,8 @@ const bindingByTab = new Map();
 const consumedByTab = new Map();
 /** tabId -> Map(url -> t) 页面主世界钩子记录的媒体流请求时刻（blob 配对用） */
 const hookTimeByTab = new Map();
+/** url -> duration 秒（服务器 ffprobe 实测，时长指纹配对用） */
+const probeCache = new Map();
 /** taskId -> {tabId, frameId} */
 const activeTasks = new Map();
 
@@ -325,6 +327,72 @@ function updateBadge(tabId) {
   const n = map ? [...map.values()].filter((x) => ['hls', 'dash', 'mp4', 'webm', 'flv'].includes(x.kind)).length : 0;
   chrome.action.setBadgeText({ tabId, text: n ? String(Math.min(n, 99)) : '' }).catch(() => {});
   chrome.action.setBadgeBackgroundColor({ tabId, color: '#2b6cff' }).catch(() => {});
+}
+
+/**
+ * 时长指纹配对（最可靠）：页面里正在播放的视频有精确 duration（如 540 秒），
+ * 让服务器 ffprobe 探测候选流的真实时长，时长吻合（±2.5 秒）的就是当前视频的
+ * 流——预加载的其他视频时长不同，绝不会配错。异步执行，完成后更新绑定与
+ * 「当前」标记；用户已滑走（纪元变化）则丢弃结果。
+ */
+function probeAndBind(tabId, targetDuration, reqSrc) {
+  if (!targetDuration || targetDuration < 1) return;
+  const map = mediaByTab.get(tabId);
+  if (!map) return;
+  const want = [];
+  for (const e of map.values()) {
+    if (probeCache.has(e.url)) continue;
+    if (['mp4', 'webm', 'flv', 'video', 'audio'].includes(e.kind)) want.push(e.url);
+  }
+  const run = () => applyProbe(tabId, targetDuration, reqSrc);
+  if (!want.length) { run(); return; }
+  if (probeCache.size > 400) probeCache.clear();
+  chrome.tabs.get(tabId).then((tab) => ({
+    urls: want.slice(0, 12),
+    referer: (tab && tab.url) || '',
+  })).then(({ urls, referer }) => api('/api/probe-durations', {
+    method: 'POST',
+    timeout: 30000,
+    target: 'server',
+    body: { urls, referer, userAgent: navigator.userAgent },
+  })).then((data) => {
+    if (data && data.ok) {
+      for (const r of (data.results || [])) {
+        if (r.duration > 0) probeCache.set(r.url, r.duration);
+      }
+    }
+    run();
+  }).catch(() => {});
+}
+
+function applyProbe(tabId, targetDuration, reqSrc) {
+  const epoch = epochByTab.get(tabId);
+  if (reqSrc && epoch && epoch.src !== reqSrc) return; // 已滑到别的视频，丢弃
+  const map = mediaByTab.get(tabId);
+  if (!map) return;
+  const pick = (kinds) => {
+    let best = null;
+    for (const e of map.values()) {
+      if (!kinds.includes(e.kind)) continue;
+      const d = probeCache.get(e.url);
+      if (!d) continue;
+      const diff = Math.abs(d - targetDuration);
+      if (diff > 2.5) continue;
+      if (!best || diff < best.diff) best = { e, diff };
+    }
+    return best ? best.e : null;
+  };
+  const v = pick(['mp4', 'webm', 'flv', 'video']);
+  if (!v) return; // 没探到吻合的，保留时间配对的结果
+  const a = pick(['audio']);
+  bindingByTab.set(tabId, { videoUrl: v.url, audioUrl: a ? a.url : '' });
+  currentSrcByTab.set(tabId, v.url);
+  // 确保该条目标题正确（弹窗「当前」跟随真实流）
+  const rt = realTitleByTab.get(tabId);
+  const cur = map.get(v.url);
+  if (cur && rt && rt.title) cur.pageTitle = rt.title;
+  persist();
+  updateBadge(tabId);
 }
 
 function notifyTab(tabId, msg) {
@@ -638,6 +706,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             consumed.add(currentUrl);
             if (audioUrl) consumed.add(audioUrl);
             consumedByTab.set(tabId, consumed);
+            // 异步做时长指纹配对（最可靠），完成后覆盖上面的临时绑定
+            const dur = Number(msg.duration) || 0;
+            if (dur > 0) probeAndBind(tabId, dur, src);
           } else {
             bindingByTab.set(tabId, { videoUrl: src, audioUrl: findAudioMate(tabId, src, 0, null, 0) });
           }
