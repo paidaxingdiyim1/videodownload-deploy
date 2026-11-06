@@ -133,13 +133,106 @@ async function doUpdateBackend() {
   }
 }
 
+/* ------------------------------ 一键更新前端 ------------------------------ */
+
+const REPO_ZIP = 'https://github.com/paidaxingdiyim1/videodownload-deploy/archive/refs/heads/main.zip';
+const IDB_NAME = 'wvd-update';
+const IDB_STORE = 'handles';
+let dirHandle = null; // 扩展目录句柄（首次选择后持久化，之后一键更新）
+
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(IDB_NAME, 1);
+    r.onupgradeneeded = () => { try { r.result.createObjectStore(IDB_STORE); } catch (_) {} };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function saveDirHandle(h) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(h, 'dir');
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function loadDirHandle() {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const rq = tx.objectStore(IDB_STORE).get('dir');
+    rq.onsuccess = () => res(rq.result || null);
+    rq.onerror = () => rej(rq.error);
+  });
+}
+
+async function writeFile(dir, rel, data) {
+  const parts = rel.split('/');
+  const name = parts.pop();
+  let cur = dir;
+  for (const seg of parts) cur = await cur.getDirectoryHandle(seg, { create: true });
+  const fh = await cur.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(new Blob([data]));
+  await w.close();
+}
+
+function detectZipRoot(zip) {
+  const roots = new Set();
+  for (const p of Object.keys(zip.files)) {
+    const i = p.indexOf('/');
+    if (i > 0) roots.add(p.slice(0, i));
+  }
+  return [...roots].sort((a, b) => a.length - b.length)[0] || '';
+}
+
 async function doUpdateFrontend() {
-  setResult('正在下载最新前端包…', true);
-  const r = await send({ type: 'update:frontend' });
-  if (r && r.ok) {
-    setResult(`已开始下载 v${r.version} 扩展包，解压后在 chrome://extensions 里「重新加载」`, true);
+  setResult('正在更新前端…', true);
+
+  // 1) 获取扩展目录句柄（showDirectoryPicker 必须在用户手势内同步调用）
+  if (!dirHandle) {
+    if (typeof window.showDirectoryPicker !== 'function') {
+      setResult('当前浏览器不支持直接写入，改用下载方式…', false);
+      const r = await send({ type: 'update:frontend' });
+      setResult(r && r.ok ? '已开始下载，解压后到 chrome://extensions 重新加载' : '下载失败：' + (r && r.error), r && r.ok);
+      return;
+    }
+    try {
+      dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      saveDirHandle(dirHandle).catch(() => {});
+    } catch (e) {
+      setResult('未选择目录，已取消', false);
+      return;
+    }
   } else {
-    setResult('下载失败：' + ((r && r.error) || '未知错误'), false);
+    try { await dirHandle.requestPermission({ mode: 'readwrite' }); } catch (_) {}
+  }
+
+  try {
+    // 2) 下载最新包
+    const res = await fetch(REPO_ZIP, { cache: 'no-store' });
+    if (!res.ok) throw new Error('下载失败 HTTP ' + res.status);
+    const buf = await res.arrayBuffer();
+
+    // 3) 解压（GitHub archive 顶层是 <repo>-<branch>/）
+    const zip = await JSZip.loadAsync(buf);
+    const root = detectZipRoot(zip);
+    const prefix = root + '/extension/';
+    const entries = Object.keys(zip.files).filter((p) => p.startsWith(prefix) && !zip.files[p].dir);
+    if (!entries.length) throw new Error('包里没找到 extension 目录');
+
+    // 4) 写入扩展目录
+    for (const p of entries) {
+      const rel = p.slice(prefix.length);
+      const data = await zip.files[p].async('uint8array');
+      await writeFile(dirHandle, rel, data);
+    }
+
+    setResult('更新完成，正在重载扩展…', true);
+    setTimeout(() => chrome.runtime.reload(), 800);
+  } catch (e) {
+    setResult('更新失败：' + ((e && e.message) || e), false);
   }
 }
 
@@ -154,4 +247,5 @@ $('#updateFrontend').addEventListener('click', doUpdateFrontend);
 document.addEventListener('DOMContentLoaded', () => {
   load();
   renderUpdate();
+  loadDirHandle().then((h) => { dirHandle = h || null; }).catch(() => {});
 });

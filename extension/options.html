@@ -92,7 +92,7 @@
           <button id="checkFrontend" class="btn">检查</button>
           <button id="updateFrontend" class="btn primary">更新前端</button>
         </div>
-        <p class="hint">更新前端 = 下载最新扩展包到本地，解压后在 <code>chrome://extensions</code> 里「重新加载」（或覆盖原 extension 文件夹后刷新）。</p>
+        <p class="hint">更新前端 = 自动下载并写入当前扩展目录，然后自动重载。首次使用会弹窗让你选中本扩展所在文件夹（选择后记住，以后一键更新）。</p>
       </div>
       <div class="field">
         <label>后端（服务器）</label>
@@ -121,6 +121,7 @@
       <span id="saved" class="saved"></span>
     </div>
   </main>
+  <script src="lib/jszip.min.js"></script>
   <script src="options.js"></script>
 </body>
 </html>
