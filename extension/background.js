@@ -35,7 +35,7 @@ const EXT_VERSION = chrome.runtime.getManifest().version;
 const mediaByTab = new Map();
 /** tabId -> 页面标题（浏览器标签页标题） */
 const tabTitles = new Map();
-/** tabId -> 页面真实视频标题（content script 从页面 DOM 提取后广播过来） */
+/** tabId -> 页面真实视频标题（content script 广播，at=广播时间） */
 const realTitleByTab = new Map();
 /** tabId -> 当前正在播放的视频地址（content script 广播） */
 const currentSrcByTab = new Map();
@@ -289,7 +289,8 @@ async function addMedia(tabId, entry) {
 
   entry.id = 'm' + Math.random().toString(36).slice(2, 9);
   entry.firstSeen = entry.lastSeen = Date.now();
-  entry.pageTitle = realTitleByTab.get(tabId) || tabTitles.get(tabId) || '';
+  const rt = realTitleByTab.get(tabId);
+  entry.pageTitle = (rt && rt.title) || tabTitles.get(tabId) || '';
   entry.pageUrl = entry.pageUrl || '';
   map.set(entry.url, entry);
 
@@ -596,14 +597,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return sendResponse({ ok: !!token, token });
         }
         case 'page:title': {
-          // content script 广播的页面真实标题（抖音特化提取等），替换标签页标题
+          // content script 广播的页面真实标题。信息流页面只修正「最近嗅探、
+          // 且标题还是上一条页面标题/标签页标题」的条目，避免把当前视频的
+          // 标题覆盖到所有历史条目上
           const tabId = sender?.tab?.id;
           const title = String(msg.title || '').trim();
           if (tabId == null || tabId < 0 || !title) return sendResponse({ ok: true });
-          realTitleByTab.set(tabId, title);
+          const prev = realTitleByTab.get(tabId);
+          const now = Date.now();
+          realTitleByTab.set(tabId, { title, at: now });
           const map = mediaByTab.get(tabId);
           if (map) {
-            for (const e of map.values()) e.pageTitle = title;
+            const prevTitle = prev ? prev.title : '';
+            const tabTitle = tabTitles.get(tabId) || '';
+            for (const e of map.values()) {
+              if (now - e.lastSeen < 20000 && (!e.pageTitle || e.pageTitle === prevTitle || e.pageTitle === tabTitle)) {
+                e.pageTitle = title;
+              }
+            }
             persist();
           }
           return sendResponse({ ok: true });

@@ -105,13 +105,19 @@
     const now = Date.now();
     if (!force && now - lastCurrent < 5000) return;
     lastCurrent = now;
+    const vw = window.innerWidth, vh = window.innerHeight;
     let best = null;
     for (const [v] of state.tracked) {
       if (!v.isConnected) continue;
       const r = v.getBoundingClientRect();
       if (r.width < 80 || r.height < 60) continue;
-      const item = { v, area: r.width * r.height, playing: !v.paused && !v.ended };
-      // 优先正在播放的；同状态取面积大的（更可能是主画面）
+      // 必须真的在视口里：信息流滑走的视频仍留在布局中（只是移出屏幕），
+      // 尺寸依旧很大，不排除会把预加载的别的视频当成「当前」
+      const ix = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+      const iy = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+      if (ix * iy < 0.3 * r.width * r.height) continue;
+      const item = { v, area: ix * iy, playing: !v.paused && !v.ended };
+      // 优先正在播放的；同状态取可见面积大的
       if (!best || (item.playing && !best.playing) || (item.playing === best.playing && item.area > best.area)) {
         best = item;
       }
