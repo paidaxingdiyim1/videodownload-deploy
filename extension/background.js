@@ -33,8 +33,10 @@ const EXT_VERSION = chrome.runtime.getManifest().version;
 
 /** tabId -> Map(url -> entry) */
 const mediaByTab = new Map();
-/** tabId -> 页面标题 */
+/** tabId -> 页面标题（浏览器标签页标题） */
 const tabTitles = new Map();
+/** tabId -> 页面真实视频标题（content script 从页面 DOM 提取后广播过来） */
+const realTitleByTab = new Map();
 /** taskId -> {tabId, frameId} */
 const activeTasks = new Map();
 
@@ -285,7 +287,7 @@ async function addMedia(tabId, entry) {
 
   entry.id = 'm' + Math.random().toString(36).slice(2, 9);
   entry.firstSeen = entry.lastSeen = Date.now();
-  entry.pageTitle = tabTitles.get(tabId) || '';
+  entry.pageTitle = realTitleByTab.get(tabId) || tabTitles.get(tabId) || '';
   entry.pageUrl = entry.pageUrl || '';
   map.set(entry.url, entry);
 
@@ -365,6 +367,7 @@ chrome.webRequest.onHeadersReceived.addListener(
 chrome.tabs.onRemoved.addListener((tabId) => {
   mediaByTab.delete(tabId);
   tabTitles.delete(tabId);
+  realTitleByTab.delete(tabId);
   persist();
 });
 
@@ -551,6 +554,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case 'pair': {
           const token = await pair(msg.target || 'server', true);
           return sendResponse({ ok: !!token, token });
+        }
+        case 'page:title': {
+          // content script 广播的页面真实标题（抖音特化提取等），替换标签页标题
+          const tabId = sender?.tab?.id;
+          const title = String(msg.title || '').trim();
+          if (tabId == null || tabId < 0 || !title) return sendResponse({ ok: true });
+          realTitleByTab.set(tabId, title);
+          const map = mediaByTab.get(tabId);
+          if (map) {
+            for (const e of map.values()) e.pageTitle = title;
+            persist();
+          }
+          return sendResponse({ ok: true });
         }
         case 'config:get': {
           return sendResponse({ ok: true, config: await getConfig() });

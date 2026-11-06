@@ -89,6 +89,16 @@
 
   /* ------------------------------ 视频跟踪 ------------------------------ */
 
+  /** 把页面级真实标题广播给后台（弹窗嗅探列表与下载命名都用它） */
+  let lastBroadcast = 0;
+  function broadcastTitle(force) {
+    const now = Date.now();
+    if (!force && now - lastBroadcast < 5000) return;
+    lastBroadcast = now;
+    const t = siteTitle() || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, ''));
+    if (t) send({ type: 'page:title', title: t });
+  }
+
   function scan(root) {
     if (!root || !root.querySelectorAll) return;
     let list;
@@ -104,6 +114,7 @@
         try { el.shadowRoot.querySelectorAll('video').forEach(trackVideo); } catch (_) {}
       }
     }
+    broadcastTitle(false);
   }
 
   function trackVideo(v) {
@@ -289,10 +300,26 @@
   function siteTitle() {
     const host = location.hostname;
     if (/douyin\.com$/i.test(host)) {
-      const sels = ['[data-e2e="detail-video-desc"]', '[data-e2e="video-desc"]', '[data-e2e="video-cover-desc"]'];
+      // 已知 data-e2e 取值 + 兜底扫描所有含 desc 的 data-e2e（覆盖个人主页视频弹窗等场景）
+      const sels = [
+        '[data-e2e="detail-video-desc"]',
+        '[data-e2e="video-desc"]',
+        '[data-e2e="video-cover-desc"]',
+        '[data-e2e="search-video-desc"]',
+      ];
+      const els = [];
       for (const sel of sels) {
         const el = document.querySelector(sel);
-        let txt = el ? String((el.innerText || el.textContent || '')).replace(/\s+/g, ' ').trim() : '';
+        if (el) els.push(el);
+      }
+      try {
+        document.querySelectorAll('[data-e2e]').forEach((el) => {
+          const k = String(el.getAttribute('data-e2e') || '').toLowerCase();
+          if (k.includes('desc') && !els.includes(el)) els.push(el);
+        });
+      } catch (_) {}
+      for (const el of els) {
+        let txt = String((el.innerText || el.textContent || '')).replace(/\s+/g, ' ').trim();
         if (txt) {
           // 去掉话题标签、@用户、emoji 干扰，标题取前 60 字
           txt = txt.replace(/(#[^\s#]+|@[\w\u4e00-\u9fa5-]+)/g, ' ').replace(/\s+/g, ' ').trim();
@@ -495,6 +522,9 @@
     buildUI();
     scan(document);
     requestAnimationFrame(loop);
+    // 标题延迟再广播一次（抖音等站点描述是异步渲染的）
+    setTimeout(() => broadcastTitle(true), 2500);
+    setTimeout(() => broadcastTitle(true), 8000);
 
     // 动态插入的视频（SPA / 懒加载）
     let moTimer = null;
