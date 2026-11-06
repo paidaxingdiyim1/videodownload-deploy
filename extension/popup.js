@@ -120,7 +120,7 @@ function renderMedia() {
       return `<div class="row done">
         <span class="tag ${it.kind}">${it.kind}</span>
         <span class="meta">
-          <span class="nm" title="${esc(it.url)}">${esc(name).slice(0, 80)}</span>
+          <span class="nm" title="${esc(it.url)}">${it.isCurrent ? '<span class="cur">当前</span>' : ''}${esc(name).slice(0, 80)}</span>
           <span class="sub addr" title="${esc(addr)}" data-i="${i}">${esc(addr).slice(0, 60)}</span>
         </span>
         <button class="act open" data-i="${i}" data-m="browser">▶ 打开</button>
@@ -131,7 +131,7 @@ function renderMedia() {
     const label = running ? `${Math.round(t.progress || 0)}%` : (err ? '重试' : '下载');
     return `<div class="row">
       <span class="tag ${it.kind}">${it.kind}</span>
-      <span class="meta"><span class="nm" title="${esc(it.url)}">${esc(name).slice(0, 80)}</span>
+      <span class="meta"><span class="nm" title="${esc(it.url)}">${it.isCurrent ? '<span class="cur">当前</span>' : ''}${esc(name).slice(0, 80)}</span>
         <span class="sub">${fmtSize(it.size) || '大小未知'}${err ? ' · ' + esc(t.error || '失败') : ''}</span>${bar}</span>
       <button class="act" data-i="${i}" ${running ? 'disabled' : ''}>${label}</button>
     </div>`;
@@ -223,7 +223,11 @@ async function refresh() {
     send({ type: 'media:list', tabId: currentTab?.id }),
     send({ type: 'tasks' }),
   ]);
-  if (m.ok) mediaItems = (m.items || []).filter((i) => ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'audio'].includes(i.kind));
+  if (m.ok) {
+    mediaItems = (m.items || []).filter((i) => ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'audio'].includes(i.kind));
+    // 当前正在播放的视频排最前
+    mediaItems.sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0));
+  }
   tasks = t.ok ? t.tasks || [] : [];
   renderMedia();
   renderTasks();

@@ -99,6 +99,26 @@
     if (t) send({ type: 'page:title', title: t });
   }
 
+  /** 广播「当前正在播放的视频地址」，弹窗列表据此标注当前视频 */
+  let lastCurrent = 0;
+  function broadcastCurrent(force) {
+    const now = Date.now();
+    if (!force && now - lastCurrent < 5000) return;
+    lastCurrent = now;
+    let best = null;
+    for (const [v] of state.tracked) {
+      if (!v.isConnected) continue;
+      const r = v.getBoundingClientRect();
+      if (r.width < 80 || r.height < 60) continue;
+      const item = { v, area: r.width * r.height, playing: !v.paused && !v.ended };
+      // 优先正在播放的；同状态取面积大的（更可能是主画面）
+      if (!best || (item.playing && !best.playing) || (item.playing === best.playing && item.area > best.area)) {
+        best = item;
+      }
+    }
+    if (best && best.v.currentSrc) send({ type: 'page:current', src: best.v.currentSrc });
+  }
+
   function scan(root) {
     if (!root || !root.querySelectorAll) return;
     let list;
@@ -168,6 +188,8 @@
     const fullscreen = !!document.fullscreenElement;
     const minW = state.cfg.minSize || 120;
 
+    // 第一遍：收集可见的视频
+    const visible = [];
     for (const [v, rec] of state.tracked) {
       if (!v.isConnected) {
         rec.btn.remove();
@@ -179,17 +201,40 @@
         continue;
       }
       const r = v.getBoundingClientRect();
-      const visible = !fullscreen && r.width >= minW && r.height >= 90 &&
+      const ok = !fullscreen && r.width >= minW && r.height >= 90 &&
         r.bottom > 8 && r.top < window.innerHeight - 8 && r.right > 8 && r.left < window.innerWidth - 8;
-
-      if (!visible) {
+      if (!ok) {
         rec.btn.classList.remove('show');
         continue;
       }
-      const w = rec.btn.offsetWidth || 84;
-      rec.btn.style.left = Math.max(6, Math.round(r.right - w - 10)) + 'px';
-      rec.btn.style.top = Math.round(Math.max(6, r.top + 10)) + 'px';
-      rec.btn.classList.add('show');
+      visible.push({ v, rec, r, area: r.width * r.height });
+    }
+    broadcastCurrent(false);
+
+    // 第二遍：重叠去重（信息流站点当前视频和预加载的下一条常完全叠在一起）
+    // 优先保留「正在播放」的，其次面积大的；与其重叠超过小者 50% 的视为同一个
+    const keep = [];
+    for (const item of visible.sort((a, b) =>
+      (a.v.paused ? 1 : 0) - (b.v.paused ? 1 : 0) || b.area - a.area)) {
+      const dup = keep.some((k) => {
+        const ox = Math.max(0, Math.min(k.r.right, item.r.right) - Math.max(k.r.left, item.r.left));
+        const oy = Math.max(0, Math.min(k.r.bottom, item.r.bottom) - Math.max(k.r.top, item.r.top));
+        const min = Math.min(k.area, item.area);
+        return min > 0 && (ox * oy) / min > 0.5;
+      });
+      if (dup) {
+        item.rec.btn.classList.remove('show');
+        continue;
+      }
+      keep.push(item);
+    }
+
+    // 第三遍：定位显示
+    for (const item of keep) {
+      const w = item.rec.btn.offsetWidth || 84;
+      item.rec.btn.style.left = Math.max(6, Math.round(item.r.right - w - 10)) + 'px';
+      item.rec.btn.style.top = Math.round(Math.max(6, item.r.top + 10)) + 'px';
+      item.rec.btn.classList.add('show');
     }
   }
 
@@ -437,6 +482,9 @@
         });
       });
       const onDoc = (e) => {
+        // 菜单在 Shadow DOM 里：其内部点击在 document 层会被重定向到宿主元素，
+        // 所以 e.target === state.host 时说明点击发生在菜单内，不能关
+        if (e.target === state.host) return;
         if (!menu.contains(e.target)) close(null);
       };
       setTimeout(() => document.addEventListener('pointerdown', onDoc, true), 0);
@@ -536,6 +584,15 @@
     // 标题延迟再广播一次（抖音等站点描述是异步渲染的）
     setTimeout(() => broadcastTitle(true), 2500);
     setTimeout(() => broadcastTitle(true), 8000);
+    setTimeout(() => broadcastCurrent(true), 2500);
+
+    // 切换/播放视频时立即刷新「当前视频」标记（信息流滑动）
+    document.addEventListener('playing', (e) => {
+      if (e.target && e.target.tagName === 'VIDEO') {
+        broadcastTitle(true);
+        broadcastCurrent(true);
+      }
+    }, true);
 
     // 动态插入的视频（SPA / 懒加载）
     let moTimer = null;

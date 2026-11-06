@@ -87,6 +87,10 @@ body {
 .act.pp:hover { border-color: #2b6cff; color: #2b6cff; background: #f4f8ff; }
 .sub.addr { cursor: pointer; color: #2b6cff; }
 .sub.addr:hover { text-decoration: underline; }
+.cur {
+  display: inline-block; font-size: 9.5px; font-weight: 700; padding: 1px 5px;
+  border-radius: 4px; background: #eafaf0; color: #0f8a4d; margin-right: 5px; vertical-align: 1px;
+}
 
 .bar { height: 3px; border-radius: 2px; background: #eef0f3; overflow: hidden; margin-top: 4px; }
 .bar > i { display: block; height: 100%; background: #2b6cff; transition: width .3s; }

@@ -37,6 +37,8 @@ const mediaByTab = new Map();
 const tabTitles = new Map();
 /** tabId -> 页面真实视频标题（content script 从页面 DOM 提取后广播过来） */
 const realTitleByTab = new Map();
+/** tabId -> 当前正在播放的视频地址（content script 广播） */
+const currentSrcByTab = new Map();
 /** taskId -> {tabId, frameId} */
 const activeTasks = new Map();
 
@@ -291,10 +293,10 @@ async function addMedia(tabId, entry) {
   entry.pageUrl = entry.pageUrl || '';
   map.set(entry.url, entry);
 
-  // 同一标签页最多留 80 条，淘汰最早的弱资源
-  if (map.size > 80) {
-    const first = [...map.keys()][0];
-    map.delete(first);
+  // 信息流站点（如抖音推荐页）会随滑动无限累积，最多保留 12 条最新的
+  if (map.size > 12) {
+    const sorted = [...map.entries()].sort((a, b) => a[1].firstSeen - b[1].firstSeen);
+    for (let i = 0; i < map.size - 12; i++) map.delete(sorted[i][0]);
   }
   persist();
   updateBadge(tabId);
@@ -368,6 +370,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   mediaByTab.delete(tabId);
   tabTitles.delete(tabId);
   realTitleByTab.delete(tabId);
+  currentSrcByTab.delete(tabId);
   persist();
 });
 
@@ -473,11 +476,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       switch (msg.type) {
+        case 'page:current': {
+          // content script 广播的「当前正在播放的视频地址」
+          const tabId = sender?.tab?.id;
+          const src = String(msg.src || '');
+          if (tabId == null || tabId < 0 || !src) return sendResponse({ ok: true });
+          currentSrcByTab.set(tabId, src);
+          return sendResponse({ ok: true });
+        }
         case 'media:list': {
           await ensureLoaded();
           const tabId = msg.tabId ?? sender?.tab?.id;
           const map = mediaByTab.get(tabId);
-          const items = map ? [...map.values()].sort((a, b) => b.lastSeen - a.lastSeen) : [];
+          const currentSrc = currentSrcByTab.get(tabId) || '';
+          const items = map
+            ? [...map.values()]
+                .sort((a, b) => b.lastSeen - a.lastSeen)
+                .map((x) => ({ ...x, isCurrent: !!currentSrc && (x.url === currentSrc || decodeURIComponent(x.url) === currentSrc) }))
+            : [];
           return sendResponse({ ok: true, items, tabId, title: tabTitles.get(tabId) || '' });
         }
         case 'media:clear': {
