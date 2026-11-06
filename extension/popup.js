@@ -244,7 +244,11 @@ async function init() {
   await checkHealth();
   await refresh();
 
-  $('#refresh').addEventListener('click', refresh);
+  $('#refresh').addEventListener('click', async () => {
+    // 清空本页记录，让页面重新上报当前视频与标题
+    await send({ type: 'media:resync', tabId: currentTab?.id });
+    setTimeout(refresh, 200);
+  });
   $('#folder').addEventListener('click', () => send({ type: 'openFolder', target: saveTarget }));
   $('#options').addEventListener('click', () => chrome.runtime.openOptionsPage());
 

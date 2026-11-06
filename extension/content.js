@@ -122,7 +122,13 @@
         best = item;
       }
     }
-    if (best && best.v.currentSrc) send({ type: 'page:current', src: best.v.currentSrc });
+    if (best && best.v.currentSrc) {
+      send({
+        type: 'page:current',
+        src: best.v.currentSrc,
+        title: siteTitle() || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, '')) || '',
+      });
+    }
   }
 
   function scan(root) {
@@ -554,6 +560,12 @@
   /* ------------------------------ 进度回调 ------------------------------ */
 
   chrome.runtime.onMessage.addListener((msg) => {
+    // 弹窗「刷新」：清空记录后页面立刻重新上报当前视频与标题
+    if (msg && msg.type === 'media:resync') {
+      broadcastTitle(true);
+      broadcastCurrent(true);
+      return;
+    }
     if (!msg || msg.type !== 'task:update') return;
     const t = msg.task;
     for (const rec of state.tracked.values()) {

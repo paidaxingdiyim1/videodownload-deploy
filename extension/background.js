@@ -290,7 +290,7 @@ async function addMedia(tabId, entry) {
   entry.id = 'm' + Math.random().toString(36).slice(2, 9);
   entry.firstSeen = entry.lastSeen = Date.now();
   const rt = realTitleByTab.get(tabId);
-  entry.pageTitle = (rt && rt.title) || tabTitles.get(tabId) || '';
+  entry.pageTitle = entry.pageTitle || (rt && rt.title) || tabTitles.get(tabId) || '';
   entry.pageUrl = entry.pageUrl || '';
   map.set(entry.url, entry);
 
@@ -478,11 +478,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       switch (msg.type) {
         case 'page:current': {
-          // content script 广播的「当前正在播放的视频地址」
+          // content script 广播「当前正在播放的视频」：地址 + 当前页面文案
           const tabId = sender?.tab?.id;
           const src = String(msg.src || '');
           if (tabId == null || tabId < 0 || !src) return sendResponse({ ok: true });
+          const prev = currentSrcByTab.get(tabId);
           currentSrcByTab.set(tabId, src);
+
+          // 标题：优先用广播里带的当前文案
+          const rt = realTitleByTab.get(tabId);
+          const title = String(msg.title || '').trim() || (rt && rt.title) || tabTitles.get(tabId) || '';
+          if (title) realTitleByTab.set(tabId, { title, at: Date.now() });
+
+          // 修正停留在旧标题上的近期条目（信息流预加载：滑动前就把下一条的流嗅探好了）
+          const map0 = mediaByTab.get(tabId);
+          if (map0 && rt && title && rt.title !== title) {
+            const cut = Date.now() - 120000;
+            for (const e of map0.values()) {
+              if (e.lastSeen >= cut && e.pageTitle === rt.title) e.pageTitle = title;
+            }
+          }
+
+          // 确保当前视频一定有列表条目（标题正确、弹窗里排第一）
+          const kind = /\.mpd(\?|#|$)/i.test(src) ? 'dash'
+            : /\.m3u8(\?|#|$)/i.test(src) ? 'hls'
+            : /\.(mp4|webm|flv|m4v|mov|mkv)(\?|#|$)/i.test(src) ? 'mp4' : 'video';
+          await addMedia(tabId, { url: src, kind, pageTitle: title || undefined });
+          return sendResponse({ ok: true });
+        }
+        case 'media:resync': {
+          // 弹窗「刷新」：清空本页嗅探记录，让页面重新上报当前视频
+          const tabId = msg.tabId ?? sender?.tab?.id;
+          mediaByTab.delete(tabId);
+          persist();
+          updateBadge(tabId);
+          notifyTab(tabId, { type: 'media:resync' });
           return sendResponse({ ok: true });
         }
         case 'media:list': {
