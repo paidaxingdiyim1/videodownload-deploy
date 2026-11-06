@@ -142,6 +142,14 @@ function renderMedia() {
     b.addEventListener('click', async () => {
       const it = mediaItems[Number(b.dataset.i)];
       if (!it) return;
+      // 音画分离站点：找伴随音轨
+      let audioUrl = '';
+      if (it.kind !== 'audio' && ['hls', 'dash', 'mp4', 'webm', 'flv', 'video'].includes(it.kind)) {
+        const mate = mediaItems
+          .filter((x) => x.kind === 'audio' && Math.abs((x.lastSeen || 0) - (it.lastSeen || 0)) < 30000)
+          .sort((a, b2) => (b2.lastSeen || 0) - (a.lastSeen || 0))[0];
+        if (mate) audioUrl = mate.url;
+      }
       b.textContent = '…';
       const res = await send({
         type: 'download',
@@ -151,6 +159,7 @@ function renderMedia() {
         referer: currentTab?.url || '',
         tabId: currentTab?.id,
         target: saveTarget,
+        audioUrl,
       });
       if (!res.ok) {
         b.textContent = '失败';

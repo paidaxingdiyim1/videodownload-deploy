@@ -462,6 +462,16 @@
     }
 
     const title = (explicit && explicit.title) || pageTitle(video);
+
+    // 音画分离站点（如抖音）：找同一时间窗内嗅探到的伴随音轨，交给服务端合并
+    let audioUrl = '';
+    if (pick.kind !== 'audio' && ['hls', 'dash', 'mp4', 'webm', 'flv', 'video'].includes(pick.kind)) {
+      const mate = (state.items || [])
+        .filter((x) => x.kind === 'audio' && Math.abs((x.lastSeen || 0) - (pick.lastSeen || 0)) < 30000)
+        .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0))[0];
+      if (mate) audioUrl = mate.url;
+    }
+
     const result = await send({
       type: 'download',
       url: pick.url,
@@ -470,6 +480,7 @@
       referer: location.href,
       tabId: null,
       target,
+      audioUrl,
     });
 
     if (!result.ok) {

@@ -128,7 +128,7 @@ function pickVariant(variants, wanted) {
 }
 
 function pickAudioRendition(pl, task) {
-  if (!task.withSeparateAudio) return null;
+  // 主播放列表带独立音轨时默认一并下载并合并（需要 ffmpeg），避免产出无声视频
   const list = pl.audioRenditions || [];
   return list.length ? list[0] : null;
 }

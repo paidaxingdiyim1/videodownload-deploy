@@ -413,6 +413,7 @@ async function startDownload(msg, sender) {
     referer: msg.referer || pageUrl,
     userAgent: navigator.userAgent,
     cookies,
+    audioUrl: msg.audioUrl || '',
   };
 
   const data = await api('/api/download', { method: 'POST', body: payload, timeout: 15000, target });

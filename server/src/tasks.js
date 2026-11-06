@@ -144,6 +144,7 @@ class TaskStore {
       headers: input.headers || null,
       cookies: input.cookies || null,
       withSeparateAudio: !!input.withSeparateAudio,
+      audioUrl: String(input.audioUrl || ''),
       status: 'queued',
       stage: 'queued',
       progress: 0,
@@ -269,6 +270,23 @@ class TaskStore {
         result = await dash.download(task, ctx);
       } else {
         result = await direct.download(task, ctx);
+      }
+
+      // 音画分离站点（如抖音）：下载伴随音轨并用 ffmpeg 合并，避免无声视频
+      if (task.audioUrl && tools.ffmpeg.ok) {
+        try {
+          this.log(task, '下载伴随音轨并合并…');
+          const actx = { ...ctx, tmpFile: ctx.tmpFile + '.audio', report: () => {} };
+          const atask = { ...task, url: task.audioUrl, kind: 'audio' };
+          const ares = await direct.download(atask, actx);
+          const merged = ctx.tmpFile + '.av.mp4';
+          await ctx.ffmpeg(['-y', '-i', result.file, '-i', ares.file, '-c', 'copy', '-map', '0:v:0', '-map', '1:a:0?', '-movflags', '+faststart', merged]);
+          try { fs.unlinkSync(ares.file); } catch (_) {}
+          result = { file: merged, ext: 'mp4' };
+          this.log(task, '音轨合并完成');
+        } catch (e) {
+          this.log(task, '音轨合并失败（保留原文件）：' + e.message);
+        }
       }
 
       // 落盘到最终文件名
