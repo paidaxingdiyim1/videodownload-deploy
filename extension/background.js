@@ -490,20 +490,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return sendResponse({ ok: true, task });
         }
         case 'tasks': {
-          // 合并服务器 + 本机两个端点的任务列表
+          // 合并服务器 + 本机两个端点的任务列表，并给每条任务打上所属端点
           const results = await Promise.allSettled([
             api('/api/tasks', { timeout: 6000, target: 'server' }),
             api('/api/tasks', { timeout: 6000, target: 'local' }),
           ]);
           const all = [];
           let any = false;
-          for (const r of results) {
+          const targets = ['server', 'local'];
+          results.forEach((r, i) => {
             if (r.status === 'fulfilled' && r.value && r.value.ok) {
               any = true;
-              all.push(...(r.value.tasks || []));
+              for (const t of (r.value.tasks || [])) { t.target = targets[i]; all.push(t); }
             }
-          }
+          });
           return sendResponse({ ok: true, tasks: all, connected: any });
+        }
+        case 'video:link': {
+          // 构建某个已下载文件的播放/打开地址
+          const cfg = await getConfig();
+          const target = msg.target === 'local' ? 'local' : 'server';
+          const filePath = msg.filePath || '';
+          const { base, token } = endpointFor(cfg, target);
+          if (target === 'local') {
+            const fileUrl = 'file:///' + filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+            return sendResponse({ ok: true, target, filePath, streamUrl: fileUrl, address: '本机 · ' + filePath });
+          }
+          const streamUrl = base + '/api/stream?path=' + encodeURIComponent(filePath) + '&token=' + encodeURIComponent(token);
+          return sendResponse({ ok: true, target, filePath, streamUrl, address: base + ' · ' + filePath });
         }
         case 'task:cancel': {
           const cfg = await getConfig();

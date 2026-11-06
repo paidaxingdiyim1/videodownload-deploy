@@ -81,6 +81,12 @@ body {
 .act:hover { background: #2b6cff; color: #fff; }
 .act[disabled] { background: #eef6f0; color: #0f8a4d; cursor: default; }
 .act[disabled]:hover { background: #eef6f0; color: #0f8a4d; }
+.act.open { background: #2b6cff; color: #fff; }
+.act.open:hover { background: #1f5bea; color: #fff; }
+.act.pp { background: #fff; border: 1px solid #e6e8eb; color: #4a4f57; }
+.act.pp:hover { border-color: #2b6cff; color: #2b6cff; background: #f4f8ff; }
+.sub.addr { cursor: pointer; color: #2b6cff; }
+.sub.addr:hover { text-decoration: underline; }
 
 .bar { height: 3px; border-radius: 2px; background: #eef0f3; overflow: hidden; margin-top: 4px; }
 .bar > i { display: block; height: 100%; background: #2b6cff; transition: width .3s; }

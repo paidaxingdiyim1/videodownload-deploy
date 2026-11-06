@@ -11,7 +11,7 @@ const tasks = require('./tasks');
 const ytdlp = require('./ytdlp');
 const util = require('./util');
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -462,6 +462,45 @@ const server = http.createServer(async (req, res) => {
       return fs.createReadStream(file).pipe(res);
     }
 
+    /* ---- 流式播放（供浏览器 / PotPlayer 直接播放局域网文件，支持拖动） ---- */
+    if (pathname === '/api/stream') {
+      const file = url.searchParams.get('path');
+      if (!file || !path.resolve(file).startsWith(path.resolve(cfg.downloadDir))) {
+        return send(res, 400, { ok: false, error: '路径不合法' }, cors);
+      }
+      let stat;
+      try { stat = fs.statSync(file); } catch (_) { return send(res, 404, { ok: false, error: '文件不存在' }, cors); }
+      if (!stat.isFile()) return send(res, 404, { ok: false, error: '不是文件' }, cors);
+      const mime = mimeFor(file);
+      const range = req.headers.range;
+      if (range) {
+        const m = /bytes=(\d*)-(\d*)/.exec(range);
+        let start = m && m[1] ? parseInt(m[1], 10) : 0;
+        let end = m && m[2] ? parseInt(m[2], 10) : stat.size - 1;
+        if (!Number.isFinite(start) || start < 0) start = 0;
+        if (!Number.isFinite(end) || end >= stat.size) end = stat.size - 1;
+        if (start > end) {
+          res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+          return res.end();
+        }
+        res.writeHead(206, {
+          'Content-Type': mime,
+          'Content-Length': end - start + 1,
+          'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-store',
+        });
+        return fs.createReadStream(file, { start, end }).pipe(res);
+      }
+      res.writeHead(200, {
+        'Content-Type': mime,
+        'Content-Length': stat.size,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store',
+      });
+      return fs.createReadStream(file).pipe(res);
+    }
+
     return send(res, 404, { ok: false, error: 'Not found' }, cors);
   } catch (e) {
     console.error('[error]', e);
@@ -470,6 +509,17 @@ const server = http.createServer(async (req, res) => {
 });
 
 /* ----------------------------- 面板页 ----------------------------- */
+
+function mimeFor(file) {
+  const map = {
+    '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mkv': 'video/x-matroska',
+    '.webm': 'video/webm', '.flv': 'video/x-flv', '.mov': 'video/quicktime',
+    '.ts': 'video/mp2t', '.m3u8': 'application/vnd.apple.mpegurl',
+    '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.aac': 'audio/aac',
+    '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  };
+  return map[path.extname(file).toLowerCase()] || 'application/octet-stream';
+}
 
 function dashboardPage(tools) {
   const dot = (ok) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ok ? '#12a150' : '#e5484d'};margin-right:6px"></span>`;

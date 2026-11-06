@@ -170,6 +170,20 @@ docker logs videodownload            # 看 Token
    - **每次询问模式**：点视频旁下载按钮或资源面板里的「下载」时，会弹出「保存到服务器 / 保存到本机」小菜单
    - 文件保存在所选端点的 `downloads/` 里；保存到服务器时用服务器状态页或 `GET /api/files` 取回
 
+### 打开 / 播放已下载的视频
+
+下载完成后，扩展弹窗里该视频会显示**具体位置**（局域网文件会标出 `http://服务器:8765` 的完整地址），并提供：
+
+- **▶ 打开**（默认）：用浏览器直接在线播放局域网文件（服务端 `/api/stream` 支持拖动进度）
+- **复制地址**：点击地址即复制可播放的 http 链接，可粘贴到任意播放器
+- **PotPlayer**：用本机 PotPlayer 打开。首次使用需在本机执行一次协议注册（Windows）：
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File deploy\windows\install-potplayer-handler.ps1
+  ```
+
+  （自动查找 PotPlayer，找不到时加 `-PotPlayerPath "C:\path\to\PotPlayerMini64.exe"`）
+
 ## 取回下载好的文件
 
 文件保存在 **服务器** 的 `downloads/<站点域名>/` 里（不是你自己的电脑）。取回方式：

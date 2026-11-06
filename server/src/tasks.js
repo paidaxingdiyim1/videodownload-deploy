@@ -246,6 +246,21 @@ class TaskStore {
       task.engine = engine;
       this.log(task, `引擎：${engine}`);
 
+      // yt-dlp 引擎：优先用 yt-dlp 解析出的真实标题（抖音等站点网页标题是品牌标语）
+      if (engine === 'ytdlp') {
+        try {
+          const info = await ytdlp.probe(task.url, { referer: task.referer });
+          const TITLE_JUNK = /记录美好生活|^抖音[\s-]*$|^douyin[\s-]*$/i;
+          if (info && info.title) {
+            const real = util.sanitizeFilename(info.title).trim();
+            if (real && !TITLE_JUNK.test(real)) {
+              task.title = real;
+              this.emit('progress', this.snapshot(task));
+            }
+          }
+        } catch (_) { /* 探测失败则沿用扩展给的标题 */ }
+      }
+
       if (engine === 'ytdlp') {
         result = await ytdlp.download(task, ctx);
       } else if (task.kind === 'hls' || /\.m3u8(\?|$)/i.test(task.url)) {

@@ -11,8 +11,6 @@
   if (window.__WVD_CONTENT__) return;
   window.__WVD_CONTENT__ = true;
 
-  const IS_TOP = (() => { try { return window.top === window; } catch (_) { return false; } })();
-
   const ICON_DL = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="m7 10 5 5 5-5"/><path d="M4 20h16"/></svg>`;
   const ICON_OK = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12 5 5L20 6"/></svg>`;
 
@@ -36,43 +34,6 @@
     .vbtn[data-s="done"] { background: #10a35a; }
     .vbtn[data-s="error"] { background: #e5484d; }
 
-    .panel { position: fixed; right: 18px; bottom: 18px; pointer-events: auto; z-index: 2147483647;
-      font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; color: #1a1d21; }
-    .pill { display: flex; align-items: center; gap: 7px; height: 38px; padding: 0 15px; border: 0; border-radius: 19px;
-      background: #fff; color: #1a1d21; font: 600 13px/1 inherit; cursor: pointer;
-      box-shadow: 0 4px 18px rgba(0,0,0,.16), 0 0 0 1px rgba(0,0,0,.05); }
-    .pill:hover { box-shadow: 0 6px 22px rgba(0,0,0,.2), 0 0 0 1px rgba(0,0,0,.06); }
-    .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: #10a35a; }
-    .pill.off .dot { background: #e5484d; }
-
-    .sheet { position: absolute; right: 0; bottom: 48px; width: 372px; max-width: calc(100vw - 36px);
-      background: #fff; border-radius: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.22), 0 0 0 1px rgba(0,0,0,.06);
-      overflow: hidden; display: none; }
-    .sheet.open { display: block; }
-    .hd { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px;
-      font-weight: 600; font-size: 13px; border-bottom: 1px solid #f0f1f3; }
-    .hd .x { border: 0; background: none; font-size: 18px; line-height: 1; color: #8a8f98; cursor: pointer; padding: 0 2px; }
-    .list { max-height: 320px; overflow: auto; }
-    .row { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-bottom: 1px solid #f6f7f8; }
-    .row:last-child { border-bottom: 0; }
-    .tag { flex: 0 0 auto; font-size: 10px; font-weight: 700; letter-spacing: .3px; padding: 3px 6px; border-radius: 5px;
-      background: #eef3ff; color: #2b6cff; text-transform: uppercase; }
-    .tag.hls { background: #eafaf0; color: #0f8a4d; }
-    .tag.dash { background: #fdf0ea; color: #c2552a; }
-    .tag.mp4, .tag.video, .tag.webm, .tag.flv { background: #eef3ff; color: #2b6cff; }
-    .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
-    .sz { flex: 0 0 auto; font-size: 11px; color: #9aa0a6; }
-    .act { flex: 0 0 auto; border: 0; height: 26px; padding: 0 10px; border-radius: 7px; background: #f2f3f5;
-      color: #1a1d21; font: 600 11.5px/1 inherit; cursor: pointer; }
-    .act:hover { background: #2b6cff; color: #fff; }
-    .act[disabled] { background: #eef6f0; color: #0f8a4d; cursor: default; }
-    .empty { padding: 22px 16px; text-align: center; color: #9aa0a6; font-size: 12.5px; }
-    .ft { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid #f0f1f3; background: #fbfbfc; }
-    .ghost { flex: 1; height: 30px; border: 1px solid #e6e8eb; background: #fff; border-radius: 8px;
-      font: 500 12px/1 inherit; color: #4a4f57; cursor: pointer; }
-    .ghost:hover { border-color: #c9ced6; color: #1a1d21; }
-    .tip { padding: 9px 14px; background: #fff7e6; color: #8a5b00; font-size: 11.5px; border-top: 1px solid #fdf0d0; }
-
     .tmenu { position: absolute; pointer-events: auto; min-width: 168px; background: #fff; border-radius: 10px;
       box-shadow: 0 8px 28px rgba(0,0,0,.25), 0 0 0 1px rgba(0,0,0,.06); overflow: hidden;
       font: 600 12.5px/1 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; color: #1a1d21; }
@@ -89,9 +50,7 @@
     host: null,
     shadow: null,
     layer: null,
-    panel: null,
     items: [],
-    lastHealth: null,
   };
 
   /* ------------------------------ 通信 ------------------------------ */
@@ -326,6 +285,27 @@
     return parts.join(' - ').trim();
   }
 
+  /** 站点特化标题：抖音等站点默认 document.title 是品牌标语，真正的标题在页面描述里 */
+  function siteTitle() {
+    const host = location.hostname;
+    if (/douyin\.com$/i.test(host)) {
+      const sels = ['[data-e2e="detail-video-desc"]', '[data-e2e="video-desc"]', '[data-e2e="video-cover-desc"]'];
+      for (const sel of sels) {
+        const el = document.querySelector(sel);
+        let txt = el ? String((el.innerText || el.textContent || '')).replace(/\s+/g, ' ').trim() : '';
+        if (txt) {
+          // 去掉话题标签、@用户、emoji 干扰，标题取前 60 字
+          txt = txt.replace(/(#[^\s#]+|@[\w\u4e00-\u9fa5-]+)/g, ' ').replace(/\s+/g, ' ').trim();
+          txt = txt.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, ' ').replace(/\s+/g, ' ').trim();
+          if (txt.length > 60) txt = txt.slice(0, 60).trim();
+          const w = titleWorth(txt, host.replace(/^www\./, ''));
+          if (w) return w;
+        }
+      }
+    }
+    return '';
+  }
+
   function pageTitle(video) {
     const pick = (sel) => {
       const el = document.querySelector(sel);
@@ -363,6 +343,9 @@
 
     // 4) 视频附近的标题节点
     if (!t && video) t = titleWorth(nearbyTitle(video), host);
+
+    // 4.5) 站点特化标题（抖音等）
+    if (!t) t = siteTitle();
 
     // 5) document.title（顺便剥掉「- 站名」后缀）
     if (!t) {
@@ -474,7 +457,6 @@
       rec.taskId = result.task.id;
       setBtnState(rec, 'running', '0%', (target === 'local' ? '保存到本机：' : '保存到服务器：') + title);
     }
-    refreshPanel();
   }
 
   /* ------------------------------ 进度回调 ------------------------------ */
@@ -494,161 +476,15 @@
         setTimeout(() => {
           if (rec.btn.isConnected) setBtnState(rec, 'idle', '下载');
         }, 5000);
-        refreshPanel();
       } else if (t.status === 'error' || t.status === 'canceled') {
         setBtnState(rec, 'error', t.status === 'canceled' ? '已取消' : '失败', t.error || '');
         rec.taskId = null;
         setTimeout(() => {
           if (rec.btn.isConnected) setBtnState(rec, 'idle', '下载');
         }, 5200);
-        refreshPanel();
       }
     }
   });
-
-  /* ------------------------------ 资源面板 ------------------------------ */
-
-  function buildPanel() {
-    if (!IS_TOP || state.panel || !state.shadow) return;
-    const wrap = document.createElement('div');
-    wrap.className = 'panel';
-    wrap.innerHTML = `
-      <button class="pill" type="button"><span class="dot"></span><span class="txt">视频资源</span></button>
-      <div class="sheet">
-        <div class="hd"><span>本页检测到的媒体</span><button class="x" type="button" title="关闭">×</button></div>
-        <div class="list"></div>
-        <div class="tip" hidden></div>
-        <div class="ft">
-          <button class="ghost folder" type="button">打开下载目录</button>
-          <button class="ghost clear" type="button">清空列表</button>
-        </div>
-      </div>`;
-    state.shadow.appendChild(wrap);
-    state.panel = wrap;
-
-    const pill = wrap.querySelector('.pill');
-    const sheet = wrap.querySelector('.sheet');
-    pill.addEventListener('click', async () => {
-      sheet.classList.toggle('open');
-      if (sheet.classList.contains('open')) {
-        await refreshPanel(true);
-        checkHealth();
-      }
-    });
-    wrap.querySelector('.x').addEventListener('click', () => sheet.classList.remove('open'));
-    wrap.querySelector('.folder').addEventListener('click', () => send({ type: 'openFolder' }));
-    wrap.querySelector('.clear').addEventListener('click', async () => {
-      await send({ type: 'media:clear' });
-      state.items = [];
-      renderRows();
-    });
-  }
-
-  function fmtSize(n) {
-    if (!n) return '';
-    if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
-    if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
-    return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
-  }
-
-  let refreshTimer = null;
-  function refreshPanel(immediate) {
-    if (!state.panel) return;
-    clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(doRefresh, immediate ? 0 : 260);
-  }
-
-  async function doRefresh() {
-    if (!state.panel) return;
-    const [mediaRes, taskRes] = await Promise.all([
-      send({ type: 'media:list' }),
-      send({ type: 'tasks' }),
-    ]);
-    if (mediaRes.ok) state.items = mediaRes.items || [];
-    state.tasks = taskRes.ok ? taskRes.tasks || [] : [];
-    renderRows();
-
-    const cnt = state.items.filter((i) => ['hls', 'dash', 'mp4', 'webm', 'flv'].includes(i.kind)).length;
-    const txt = state.panel.querySelector('.pill .txt');
-    if (txt) txt.textContent = cnt ? `${cnt} 个视频资源` : '视频资源';
-  }
-
-  function renderRows() {
-    if (!state.panel) return;
-    const list = state.panel.querySelector('.list');
-    const items = state.items.filter((i) => ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'audio'].includes(i.kind));
-
-    if (!items.length) {
-      list.innerHTML = `<div class="empty">这一页还没检测到媒体资源<br>点击视频播放几秒再打开这里</div>`;
-      return;
-    }
-
-    const byUrl = new Map();
-    for (const t of (state.tasks || [])) byUrl.set(t.url, t);
-
-    list.innerHTML = items.map((it, idx) => {
-      const t = byUrl.get(it.url);
-      const running = t && ['queued', 'running', 'decrypting', 'merging'].includes(t.status);
-      const done = t && t.status === 'done';
-      const label = done ? '已保存' : running ? `${Math.round(t.progress || 0)}%` : '下载';
-      const dis = done || running ? 'disabled' : '';
-      const name = it.title || it.pageTitle || guessName(it.url);
-      return `<div class="row" data-i="${idx}">
-        <span class="tag ${it.kind}">${it.kind}</span>
-        <span class="nm" title="${escapeAttr(it.url)}">${escapeHtml(name)}</span>
-        <span class="sz">${fmtSize(it.size)}</span>
-        <button class="act" data-i="${idx}" ${dis} type="button">${label}</button>
-      </div>`;
-    }).join('');
-
-    list.querySelectorAll('.act').forEach((b) => {
-      b.addEventListener('click', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const it = items[Number(b.dataset.i)];
-        if (!it) return;
-        const target = await chooseTarget(b);
-        if (!target) return;
-        b.textContent = '…';
-        await startDownloadFor(null, null, { ...it, title: it.pageTitle || pageTitle(null) }, target);
-        refreshPanel();
-      });
-    });
-  }
-
-  async function checkHealth() {
-    const r = await send({ type: 'health' });
-    state.lastHealth = r;
-    if (!state.panel) return;
-    const pill = state.panel.querySelector('.pill');
-    const tip = state.panel.querySelector('.tip');
-    const ok = r && r.ok;
-    pill.classList.toggle('off', !ok);
-    if (!ok) {
-      tip.hidden = false;
-      tip.textContent = '下载服务未连接：本机请运行 start.bat，服务器请运行 start-lan.bat，再到扩展设置里检查地址与 Token。';
-    } else if (tip && !r.tools?.ytdlp?.ok) {
-      tip.hidden = false;
-      tip.textContent = '提示：未检测到 yt-dlp，部分站点可能失败；HLS 未装 ffmpeg 时会保存为 .ts。';
-    } else if (tip) {
-      tip.hidden = true;
-    }
-  }
-
-  function guessName(url) {
-    try {
-      const u = new URL(url);
-      const last = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || '');
-      return (last || u.hostname).slice(0, 60);
-    } catch (_) {
-      return url.slice(0, 60);
-    }
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  }
-  function escapeAttr(s) { return escapeHtml(s); }
 
   /* ------------------------------ 启动 ------------------------------ */
 
@@ -659,10 +495,6 @@
     buildUI();
     scan(document);
     requestAnimationFrame(loop);
-    if (IS_TOP) {
-      buildPanel();
-      setTimeout(checkHealth, 1200);
-    }
 
     // 动态插入的视频（SPA / 懒加载）
     let moTimer = null;
@@ -676,11 +508,6 @@
       moTimer = setTimeout(() => scan(document), 350);
     });
     try { mo.observe(document.documentElement, { childList: true, subtree: true }); } catch (_) {}
-
-    // 视频开始播放时刷新资源列表
-    document.addEventListener('playing', (e) => {
-      if (e.target && e.target.tagName === 'VIDEO') setTimeout(() => refreshPanel(), 700);
-    }, true);
 
     window.addEventListener('resize', () => updatePositions(), { passive: true });
   }

@@ -31,6 +31,7 @@
 | **登录可见视频** | 自动带上页面的 Cookie、Referer、User-Agent |
 | **保存位置可选** | 视频可保存到局域网服务器或本机：扩展弹窗一键切换、设置里改默认、或每次下载时弹出「服务器 / 本机」菜单 |
 | **在线自更新** | 扩展内置「更新后端 / 更新前端」：后端从公开仓库 git pull 自重启，前端下载最新扩展包，并自动检测新版本 |
+| **打开已下载视频** | 下载完成后前端显示具体地址（局域网标出 http 地址），可一键用浏览器播放、复制地址，或用本机 PotPlayer 打开 |
 | **零依赖服务** | 服务端只用 Node 标准库，不装任何 npm 包也能跑 |
 
 ## 快速开始
@@ -192,6 +193,7 @@ node build/test-exe.js     # 验证：启动 / 识别工具 / 直链下载 / yt-
 | GET | `/api/files` | 列出 `downloadDir` 下的文件（含带 Token 的取回链接），局域网部署取回文件用 |
 | GET | `/api/update/check` | 检查公开仓库是否有新提交 |
 | POST | `/api/update` | 从公开仓库 `git pull` 并重启 |
+| GET | `/api/stream` | 流式播放下载目录文件（支持 Range 拖动） |
 
 ## 目录结构
 
@@ -225,6 +227,7 @@ scripts/              辅助脚本
 deploy/               部署脚本
   linux/install.sh    Linux 一键部署（公开仓库克隆 + 守护循环 + crontab 自启）
   windows-service/    Windows 计划任务常驻（install/uninstall）
+  windows/install-potplayer-handler.ps1  注册 wvdplay:// 协议，供扩展用本机 PotPlayer 打开视频
 assets/app.ico        应用图标
 ```
 

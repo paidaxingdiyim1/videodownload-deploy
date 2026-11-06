@@ -6,6 +6,7 @@ let currentTab = null;
 let mediaItems = [];
 let tasks = [];
 let saveTarget = 'server'; // 当前保存位置（popup 里快速切换）
+let cfg = {}; // 扩展配置（含服务器/本机地址与 Token）
 
 function send(msg) {
   return new Promise((resolve) => {
@@ -56,6 +57,47 @@ async function switchTarget(t) {
   refresh();
 }
 
+function buildLink(t) {
+  if (!t) return null;
+  const target = t.target === 'local' ? 'local' : 'server';
+  if (target === 'local') {
+    const fileUrl = 'file:///' + String(t.filePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    return { target, filePath: t.filePath, streamUrl: fileUrl, address: '本机 · ' + (t.filePath || t.fileName || '') };
+  }
+  const base = String(cfg.serverUrl || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+  const streamUrl = base + '/api/stream?path=' + encodeURIComponent(t.filePath || '') + '&token=' + encodeURIComponent(cfg.serverToken || '');
+  return { target, filePath: t.filePath, streamUrl, address: base + ' · ' + (t.filePath || t.fileName || '') };
+}
+
+async function openVideo(t, method) {
+  const link = buildLink(t);
+  if (!link) return;
+  if (method === 'potplayer') {
+    // 通过 wvdplay:// 协议唤起本机 PotPlayer（需先运行一次 install-potplayer-handler.ps1）
+    window.open('wvdplay:' + link.streamUrl);
+  } else {
+    if (link.target === 'local') window.open(link.streamUrl);
+    else chrome.tabs.create({ url: link.streamUrl });
+  }
+}
+
+async function copyAddr(t) {
+  const link = buildLink(t);
+  if (!link) return;
+  const text = link.target === 'local' ? link.filePath : link.streamUrl;
+  try {
+    await navigator.clipboard.writeText(text);
+    flashCopy(t.id || '');
+  } catch (_) {}
+}
+
+function flashCopy() {
+  const el = $('#status .stxt');
+  const old = el.textContent;
+  el.textContent = '地址已复制';
+  setTimeout(() => { el.textContent = old; }, 1200);
+}
+
 function renderMedia() {
   const list = $('#media-list');
   $('#count').textContent = mediaItems.length;
@@ -68,18 +110,35 @@ function renderMedia() {
     const t = byUrl.get(it.url);
     const running = t && ['queued', 'running', 'decrypting', 'merging'].includes(t.status);
     const done = t && t.status === 'done';
-    const label = done ? '已保存' : running ? `${Math.round(t.progress || 0)}%` : '下载';
+    const err = t && t.status === 'error';
     const name = it.title || it.pageTitle || it.url.split('/').pop() || it.url;
     const bar = running ? `<div class="bar"><i style="width:${Math.round(t.progress || 0)}%"></i></div>` : '';
+
+    if (done) {
+      const link = buildLink(t);
+      const addr = link ? link.address : (t.filePath || t.fileName || '');
+      return `<div class="row done">
+        <span class="tag ${it.kind}">${it.kind}</span>
+        <span class="meta">
+          <span class="nm" title="${esc(it.url)}">${esc(name).slice(0, 80)}</span>
+          <span class="sub addr" title="${esc(addr)}" data-i="${i}">${esc(addr).slice(0, 60)}</span>
+        </span>
+        <button class="act open" data-i="${i}" data-m="browser">▶ 打开</button>
+        <button class="act pp" data-i="${i}" data-m="potplayer" title="用本机 PotPlayer 播放（需先运行一次协议安装脚本）">PotPlayer</button>
+      </div>`;
+    }
+
+    const label = running ? `${Math.round(t.progress || 0)}%` : (err ? '重试' : '下载');
     return `<div class="row">
       <span class="tag ${it.kind}">${it.kind}</span>
       <span class="meta"><span class="nm" title="${esc(it.url)}">${esc(name).slice(0, 80)}</span>
-        <span class="sub">${fmtSize(it.size) || '大小未知'}${t && t.status === 'error' ? ' · ' + esc(t.error || '失败') : ''}</span>${bar}</span>
-      <button class="act" data-i="${i}" ${done || running ? 'disabled' : ''}>${label}</button>
+        <span class="sub">${fmtSize(it.size) || '大小未知'}${err ? ' · ' + esc(t.error || '失败') : ''}</span>${bar}</span>
+      <button class="act" data-i="${i}" ${running ? 'disabled' : ''}>${label}</button>
     </div>`;
   }).join('');
 
-  list.querySelectorAll('.act').forEach((b) => {
+  // 下载 / 重试
+  list.querySelectorAll('.act:not(.open):not(.pp)').forEach((b) => {
     b.addEventListener('click', async () => {
       const it = mediaItems[Number(b.dataset.i)];
       if (!it) return;
@@ -100,6 +159,24 @@ function renderMedia() {
       } else {
         setTimeout(refresh, 500);
       }
+    });
+  });
+
+  // 打开（浏览器 / PotPlayer）
+  list.querySelectorAll('.act.open, .act.pp').forEach((b) => {
+    b.addEventListener('click', () => {
+      const it = mediaItems[Number(b.dataset.i)];
+      const t = it && byUrl.get(it.url);
+      if (t) openVideo(t, b.dataset.m);
+    });
+  });
+
+  // 点击地址复制
+  list.querySelectorAll('.sub.addr').forEach((s) => {
+    s.addEventListener('click', () => {
+      const it = mediaItems[Number(s.dataset.i)];
+      const t = it && byUrl.get(it.url);
+      if (t) copyAddr(t);
     });
   });
 }
@@ -137,7 +214,7 @@ async function refresh() {
 async function init() {
   [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const c = await send({ type: 'config:get' });
-  if (c.ok) saveTarget = c.config.saveTarget === 'local' ? 'local' : 'server';
+  if (c.ok) { cfg = c.config || {}; saveTarget = cfg.saveTarget === 'local' ? 'local' : 'server'; }
   renderTarget();
   document.querySelectorAll('#tgt button').forEach((b) => {
     b.addEventListener('click', () => switchTarget(b.dataset.t));
