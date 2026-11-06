@@ -39,6 +39,8 @@ const tabTitles = new Map();
 const realTitleByTab = new Map();
 /** tabId -> 当前正在播放的视频地址（content script 广播） */
 const currentSrcByTab = new Map();
+/** tabId -> true（该标签页当前是直播间，停止媒体嗅探） */
+const liveByTab = new Map();
 /** taskId -> {tabId, frameId} */
 const activeTasks = new Map();
 
@@ -322,6 +324,7 @@ const urlCache = new Map(); // requestId -> {url, tabId}
 chrome.webRequest.onBeforeRequest.addListener(
   (d) => {
     if (d.tabId == null || d.tabId < 0) return;
+    if (liveByTab.get(d.tabId)) return; // 直播间：不嗅探
     if (!isCandidate(d.url, '')) return;
     urlCache.set(d.requestId, { url: d.url, tabId: d.tabId, timeStamp: d.timeStamp });
     if (urlCache.size > 400) urlCache.delete(urlCache.keys().next().value);
@@ -340,6 +343,7 @@ chrome.webRequest.onBeforeRequest.addListener(
 chrome.webRequest.onHeadersReceived.addListener(
   (d) => {
     if (d.tabId == null || d.tabId < 0) return;
+    if (liveByTab.get(d.tabId)) return; // 直播间：不嗅探
     const headers = d.responseHeaders || [];
     const get = (name) => {
       const h = headers.find((x) => x.name.toLowerCase() === name);
@@ -372,6 +376,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   tabTitles.delete(tabId);
   realTitleByTab.delete(tabId);
   currentSrcByTab.delete(tabId);
+  liveByTab.delete(tabId);
   persist();
 });
 
@@ -379,6 +384,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.title) tabTitles.set(tabId, changeInfo.title);
   if (changeInfo.url) {
     mediaByTab.delete(tabId);
+    liveByTab.delete(tabId); // 导航到新页面时重置直播间状态
     persist();
     updateBadge(tabId);
   }
@@ -477,6 +483,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       switch (msg.type) {
+        case 'page:live': {
+          // content script 广播的直播间状态：true=进入直播间（清空媒体、停止嗅探）
+          const tabId = sender?.tab?.id;
+          if (tabId == null || tabId < 0) return sendResponse({ ok: true });
+          if (msg.live) {
+            liveByTab.set(tabId, true);
+            mediaByTab.delete(tabId);
+            persist();
+            updateBadge(tabId);
+          } else {
+            liveByTab.delete(tabId);
+          }
+          return sendResponse({ ok: true });
+        }
         case 'page:current': {
           // content script 广播「当前正在播放的视频」：地址 + 当前页面文案
           const tabId = sender?.tab?.id;

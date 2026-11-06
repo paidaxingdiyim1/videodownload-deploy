@@ -51,6 +51,7 @@
     shadow: null,
     layer: null,
     items: [],
+    isLive: false,
   };
 
   /* ------------------------------ 通信 ------------------------------ */
@@ -126,13 +127,27 @@
       send({
         type: 'page:current',
         src: best.v.currentSrc,
-        title: siteTitle() || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, '')) || '',
+        // 用「正在播放的这个视频」所在卡片里的描述作为标题（而非全局第一个）
+        title: siteTitle(best.v) || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, '')) || '',
       });
+    }
+  }
+
+  /** 检测并同步直播间状态：直播间时停止扫描、隐藏按钮、通知后台停止嗅探 */
+  function refreshLiveState() {
+    const live = isLiveRoom();
+    if (live === state.isLive) return;
+    state.isLive = live;
+    send({ type: 'page:live', live });
+    if (live) {
+      for (const rec of state.tracked.values()) rec.btn.classList.remove('show');
     }
   }
 
   function scan(root) {
     if (!root || !root.querySelectorAll) return;
+    refreshLiveState();
+    if (state.isLive) return; // 直播间：不进行资源探索
     let list;
     try { list = root.querySelectorAll('video'); } catch (_) { return; }
     list.forEach(trackVideo);
@@ -197,6 +212,11 @@
 
   function updatePositions() {
     if (document.hidden) return;
+    if (state.isLive) {
+      // 直播间：不显示任何下载按钮
+      for (const rec of state.tracked.values()) rec.btn.classList.remove('show');
+      return;
+    }
     const fullscreen = !!document.fullscreenElement;
     const minW = state.cfg.minSize || 120;
 
@@ -222,6 +242,17 @@
       visible.push({ v, rec, r, area: r.width * r.height });
     }
     broadcastCurrent(false);
+
+    // 抖音信息流：只对「正在播放」的视频显示下载按钮。
+    // 只要页面里有正在播放的视频，就隐藏所有已暂停（预加载/滑走）的视频按钮
+    if (isDouyin() && visible.some((x) => !x.v.paused)) {
+      for (let i = visible.length - 1; i >= 0; i--) {
+        if (visible[i].v.paused) {
+          visible[i].rec.btn.classList.remove('show');
+          visible.splice(i, 1);
+        }
+      }
+    }
 
     // 第二遍：重叠去重（信息流站点当前视频和预加载的下一条常完全叠在一起）
     // 优先保留「正在播放」的，其次面积大的；与其重叠超过小者 50% 的视为同一个
@@ -353,38 +384,80 @@
     return parts.join(' - ').trim();
   }
 
-  /** 站点特化标题：抖音等站点默认 document.title 是品牌标语，真正的标题在页面描述里 */
-  function siteTitle() {
+  /** 是否抖音站点 */
+  function isDouyin() {
+    return /douyin\.com$/i.test(location.hostname);
+  }
+
+  /** 是否直播间：URL 特征 + DOM 特征双保险 */
+  function isLiveRoom() {
+    if (/^live\./i.test(location.hostname)) return true;
+    if (isDouyin()) {
+      try {
+        const t = document.title || '';
+        if (t.includes('的直播间') || t.includes('正在直播')) return true;
+        if (document.querySelector('[data-e2e="live-room"]')) return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  /**
+   * 站点特化标题：抖音等站点默认 document.title 是品牌标语，真正的标题在页面描述里。
+   * 传入 video 时，优先在它所在的卡片容器内查找 desc，保证标题和正在看的视频对齐
+   * （信息流页有多个视频卡片，全局 querySelector 抓到的第一个往往是错的）。
+   */
+  function siteTitle(video) {
     const host = location.hostname;
-    if (/douyin\.com$/i.test(host)) {
-      // 已知 data-e2e 取值 + 兜底扫描所有含 desc 的 data-e2e（覆盖个人主页视频弹窗等场景）
-      const sels = [
+    if (!/douyin\.com$/i.test(host)) return '';
+
+    // 确定查找范围：有 video 时向上找第一个「子树里含 desc 元素」的卡片容器
+    let scope = document;
+    if (video) {
+      let node = video.parentElement;
+      for (let i = 0; i < 9 && node && node !== document.body; i++) {
+        let hasDesc = false;
+        try {
+          node.querySelectorAll('[data-e2e]').forEach((el) => {
+            if (String(el.getAttribute('data-e2e') || '').toLowerCase().includes('desc')) hasDesc = true;
+          });
+        } catch (_) {}
+        if (hasDesc) { scope = node; break; }
+        node = node.parentElement;
+      }
+    }
+
+    const els = [];
+    const seen = new Set();
+    const collect = (root) => {
+      if (!root || !root.querySelectorAll) return;
+      for (const sel of [
         '[data-e2e="detail-video-desc"]',
         '[data-e2e="video-desc"]',
         '[data-e2e="video-cover-desc"]',
         '[data-e2e="search-video-desc"]',
-      ];
-      const els = [];
-      for (const sel of sels) {
-        const el = document.querySelector(sel);
-        if (el) els.push(el);
+      ]) {
+        try { root.querySelectorAll(sel).forEach((el) => { if (!seen.has(el)) { seen.add(el); els.push(el); } }); } catch (_) {}
       }
       try {
-        document.querySelectorAll('[data-e2e]').forEach((el) => {
+        root.querySelectorAll('[data-e2e]').forEach((el) => {
           const k = String(el.getAttribute('data-e2e') || '').toLowerCase();
-          if (k.includes('desc') && !els.includes(el)) els.push(el);
+          if (k.includes('desc') && !seen.has(el)) { seen.add(el); els.push(el); }
         });
       } catch (_) {}
-      for (const el of els) {
-        let txt = String((el.innerText || el.textContent || '')).replace(/\s+/g, ' ').trim();
-        if (txt) {
-          // 去掉话题标签、@用户、emoji 干扰，标题取前 60 字
-          txt = txt.replace(/(#[^\s#]+|@[\w\u4e00-\u9fa5-]+)/g, ' ').replace(/\s+/g, ' ').trim();
-          txt = txt.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, ' ').replace(/\s+/g, ' ').trim();
-          if (txt.length > 60) txt = txt.slice(0, 60).trim();
-          const w = titleWorth(txt, host.replace(/^www\./, ''));
-          if (w) return w;
-        }
+    };
+    collect(scope);
+    if (!els.length && scope !== document) collect(document); // 卡片内没找到时兜底全局
+
+    for (const el of els) {
+      let txt = String((el.innerText || el.textContent || '')).replace(/\s+/g, ' ').trim();
+      if (txt) {
+        // 去掉话题标签、@用户、emoji 干扰，标题取前 60 字
+        txt = txt.replace(/(#[^\s#]+|@[\w\u4e00-\u9fa5-]+)/g, ' ').replace(/\s+/g, ' ').trim();
+        txt = txt.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, ' ').replace(/\s+/g, ' ').trim();
+        if (txt.length > 60) txt = txt.slice(0, 60).trim();
+        const w = titleWorth(txt, host.replace(/^www\./, ''));
+        if (w) return w;
       }
     }
     return '';
@@ -428,8 +501,8 @@
     // 4) 视频附近的标题节点
     if (!t && video) t = titleWorth(nearbyTitle(video), host);
 
-    // 4.5) 站点特化标题（抖音等）
-    if (!t) t = siteTitle();
+    // 4.5) 站点特化标题（抖音等，优先在当前视频所在卡片里找）
+    if (!t) t = siteTitle(video);
 
     // 5) document.title（顺便剥掉「- 站名」后缀）
     if (!t) {
@@ -523,11 +596,14 @@
 
     const title = (explicit && explicit.title) || pageTitle(video);
 
-    // 音画分离站点（如抖音）：找同一时间窗内嗅探到的伴随音轨，交给服务端合并
+    // 音画分离站点（如抖音）：找最近 30 秒内嗅探到的伴随音轨，交给服务端合并。
+    // 注意：pick 可能是从视频元素直链取到的候选，没有 lastSeen，必须用「当前时间」
+    // 相对判断，否则 Math.abs(x.lastSeen - undefined) = NaN 永远匹配不到（此前的 bug）
     let audioUrl = '';
     if (pick.kind !== 'audio' && ['hls', 'dash', 'mp4', 'webm', 'flv', 'video'].includes(pick.kind)) {
+      const now = Date.now();
       const mate = (state.items || [])
-        .filter((x) => x.kind === 'audio' && Math.abs((x.lastSeen || 0) - (pick.lastSeen || 0)) < 30000)
+        .filter((x) => x.kind === 'audio' && now - (x.lastSeen || 0) < 30000)
         .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0))[0];
       if (mate) audioUrl = mate.url;
     }
@@ -599,6 +675,8 @@
     buildUI();
     scan(document);
     requestAnimationFrame(loop);
+    // 周期检测直播间（推荐流里滑动到直播卡片时 URL 不变，靠 DOM 特征识别）
+    setInterval(refreshLiveState, 3000);
     // 标题延迟再广播一次（抖音等站点描述是异步渲染的）
     setTimeout(() => broadcastTitle(true), 2500);
     setTimeout(() => broadcastTitle(true), 8000);
