@@ -129,6 +129,8 @@
         src: best.v.currentSrc,
         // 用「正在播放的这个视频」所在卡片里的描述作为标题（而非全局第一个）
         title: siteTitle(best.v) || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, '')) || '',
+        // 信息流站点：弹窗只显示当前视频的链接（防堆积，只识别正在播放的）
+        solo: isDouyin(),
       });
     }
   }
@@ -596,18 +598,6 @@
 
     const title = (explicit && explicit.title) || pageTitle(video);
 
-    // 音画分离站点（如抖音）：找最近 30 秒内嗅探到的伴随音轨，交给服务端合并。
-    // 注意：pick 可能是从视频元素直链取到的候选，没有 lastSeen，必须用「当前时间」
-    // 相对判断，否则 Math.abs(x.lastSeen - undefined) = NaN 永远匹配不到（此前的 bug）
-    let audioUrl = '';
-    if (pick.kind !== 'audio' && ['hls', 'dash', 'mp4', 'webm', 'flv', 'video'].includes(pick.kind)) {
-      const now = Date.now();
-      const mate = (state.items || [])
-        .filter((x) => x.kind === 'audio' && now - (x.lastSeen || 0) < 30000)
-        .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0))[0];
-      if (mate) audioUrl = mate.url;
-    }
-
     const result = await send({
       type: 'download',
       url: pick.url,
@@ -616,7 +606,6 @@
       referer: location.href,
       tabId: null,
       target,
-      audioUrl,
     });
 
     if (!result.ok) {

@@ -137,19 +137,11 @@ function renderMedia() {
     </div>`;
   }).join('');
 
-  // 下载 / 重试
+  // 下载 / 重试（伴随音轨由后台统一匹配：后台有完整嗅探记录 + 播放纪元归属）
   list.querySelectorAll('.act:not(.open):not(.pp)').forEach((b) => {
     b.addEventListener('click', async () => {
       const it = mediaItems[Number(b.dataset.i)];
       if (!it) return;
-      // 音画分离站点：找伴随音轨
-      let audioUrl = '';
-      if (it.kind !== 'audio' && ['hls', 'dash', 'mp4', 'webm', 'flv', 'video'].includes(it.kind)) {
-        const mate = mediaItems
-          .filter((x) => x.kind === 'audio' && Math.abs((x.lastSeen || 0) - (it.lastSeen || 0)) < 30000)
-          .sort((a, b2) => (b2.lastSeen || 0) - (a.lastSeen || 0))[0];
-        if (mate) audioUrl = mate.url;
-      }
       b.textContent = '…';
       const res = await send({
         type: 'download',
@@ -159,7 +151,6 @@ function renderMedia() {
         referer: currentTab?.url || '',
         tabId: currentTab?.id,
         target: saveTarget,
-        audioUrl,
       });
       if (!res.ok) {
         b.textContent = '失败';
@@ -245,9 +236,11 @@ async function init() {
   await refresh();
 
   $('#refresh').addEventListener('click', async () => {
-    // 清空本页记录，让页面重新上报当前视频与标题
+    // 重新识别当前视频：信息流页保留嗅探记录只重新标记当前视频（含真实流归属），
+    // 普通页面清空重嗅探；页面会立刻重新上报「当前视频 + 当前文案」
     await send({ type: 'media:resync', tabId: currentTab?.id });
-    setTimeout(refresh, 200);
+    setTimeout(refresh, 350);
+    setTimeout(refresh, 1200);
   });
   $('#folder').addEventListener('click', () => send({ type: 'openFolder', target: saveTarget }));
   $('#options').addEventListener('click', () => chrome.runtime.openOptionsPage());
