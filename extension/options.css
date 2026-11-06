@@ -62,3 +62,30 @@ input[type=number] { max-width: 130px; }
 @media (max-width: 700px) { .save-bar { padding: 12px 20px; } }
 .saved { font-size: 12px; color: #0f8a4d; opacity: 0; transition: opacity .2s; }
 .saved.show { opacity: 1; }
+
+/* ---- 下载中心 ---- */
+.tasklist, .filelist { border: 1px solid #e9eef6; border-radius: 9px; background: #fbfcfe; max-height: 400px; overflow: auto; }
+.tasklist .empty, .filelist .empty { padding: 18px; text-align: center; color: #9aa0a6; font-size: 12px; }
+.task { padding: 11px 14px; border-bottom: 1px solid #eef0f3; }
+.task:last-child { border-bottom: 0; }
+.task .t1 { display: flex; align-items: center; gap: 8px; }
+.task .st { flex: 0 0 auto; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 5px; }
+.st.running, .st.decrypting, .st.merging { background: #eef3ff; color: #2b6cff; }
+.st.queued { background: #f4efff; color: #7b4bff; }
+.st.done { background: #eafaf0; color: #0f8a4d; }
+.st.error, .st.canceled { background: #fdecec; color: #c22b2f; }
+.task .tt { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task .meta { font-size: 11.5px; color: #6b7280; margin-top: 4px; }
+.bar { height: 4px; background: #eef0f3; border-radius: 2px; overflow: hidden; margin-top: 5px; }
+.bar > i { display: block; height: 100%; background: #2b6cff; transition: width .3s; }
+.task .loc { font-size: 11px; color: #9aa0a6; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task .act2 { display: flex; gap: 6px; margin-top: 7px; }
+.btn.sm { height: 27px; padding: 0 11px; font-size: 12px; }
+.fileline { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 12.5px; border-bottom: 1px solid #f3f5f7; }
+.fileline:last-child { border-bottom: 0; }
+.fileline .folder { font-weight: 650; color: #1a1d21; cursor: pointer; user-select: none; }
+.fileline .folder .cnt { color: #9aa0a6; font-weight: 500; font-size: 11px; margin-left: 4px; }
+.fileline .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fileline .sz { flex: 0 0 auto; color: #9aa0a6; font-size: 11.5px; }
+.fileline .btn { height: 25px; padding: 0 9px; font-size: 11.5px; }
+

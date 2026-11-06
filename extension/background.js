@@ -522,6 +522,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const streamUrl = base + '/api/stream?path=' + encodeURIComponent(filePath) + '&token=' + encodeURIComponent(token);
           return sendResponse({ ok: true, target, filePath, streamUrl, address: base + ' · ' + filePath });
         }
+        case 'files': {
+          // 列出服务器 + 本机的下载目录内容（用于设置页「下载中心」）
+          const results = await Promise.allSettled([
+            api('/api/files', { timeout: 10000, target: 'server' }),
+            api('/api/files', { timeout: 10000, target: 'local' }),
+          ]);
+          const groups = [];
+          const targets = ['server', 'local'];
+          results.forEach((r, i) => {
+            if (r.status === 'fulfilled' && r.value && r.value.ok) {
+              groups.push({ target: targets[i], dir: r.value.dir || '', files: r.value.files || [] });
+            }
+          });
+          return sendResponse({ ok: true, groups });
+        }
         case 'task:cancel': {
           const cfg = await getConfig();
           const t = resolveTarget(msg.target, cfg);

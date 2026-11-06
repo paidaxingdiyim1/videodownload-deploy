@@ -194,10 +194,19 @@ function renderTasks() {
       <span class="tag">${t.status === 'merging' ? 'mux' : t.status === 'decrypting' ? 'dec' : 'dl'}</span>
       <span class="meta">
         <span class="nm">${esc(t.title)}</span>
-        <span class="sub">${Math.round(t.progress || 0)}%${t.speed ? ' · ' + fmtSize(t.speed) + '/s' : ''}${t.segmentsTotal ? ` · 分片 ${t.segmentsDone}/${t.segmentsTotal}` : ''}</span>
+        <span class="sub">${Math.round(t.progress || 0)}%${t.speed ? ' · ' + fmtSize(t.speed) + '/s' : ''}${t.total ? ' · ' + fmtSize(t.downloaded) + '/' + fmtSize(t.total) : ''}${t.segmentsTotal ? ` · 分片 ${t.segmentsDone}/${t.segmentsTotal}` : ''}</span>
         <span class="bar"><i style="width:${Math.round(t.progress || 0)}%"></i></span>
       </span>
+      <button class="act" data-cancel="${t.id}" data-target="${t.target || 'server'}">停止</button>
     </div>`).join('');
+
+  $('#task-list').querySelectorAll('[data-cancel]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      b.textContent = '…';
+      await send({ type: 'task:cancel', id: b.dataset.cancel, target: b.dataset.target });
+      refresh();
+    });
+  });
 }
 
 async function refresh() {

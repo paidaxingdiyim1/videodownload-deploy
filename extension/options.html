@@ -107,6 +107,24 @@
     </section>
 
     <section class="card">
+      <h2>下载中心</h2>
+      <div class="field">
+        <label>下载任务</label>
+        <div id="task-list" class="tasklist"><div class="empty">加载中…</div></div>
+        <div class="row actions">
+          <button id="tasksClear" class="btn sm">清空已完成</button>
+          <button id="tasksRefresh" class="btn sm">刷新</button>
+          <span class="grow"></span>
+          <span id="task-summary" class="result"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label>下载目录</label>
+        <div id="file-list" class="filelist"><div class="empty">加载中…</div></div>
+      </div>
+    </section>
+
+    <section class="card">
       <h2>说明</h2>
       <ul class="notes">
         <li>支持 HLS（m3u8，含 AES-128 加密分片）、DASH、直链 MP4/WebM 等。</li>
