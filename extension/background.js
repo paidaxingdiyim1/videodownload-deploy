@@ -52,6 +52,8 @@ const soloByTab = new Map();
 const bindingByTab = new Map();
 /** tabId -> Set(urls) 已被之前视频消费的流，归属新视频时排除（每条流只归属一次） */
 const consumedByTab = new Map();
+/** tabId -> Map(url -> t) 页面主世界钩子记录的媒体流请求时刻（blob 配对用） */
+const hookTimeByTab = new Map();
 /** taskId -> {tabId, frameId} */
 const activeTasks = new Map();
 
@@ -330,27 +332,34 @@ function notifyTab(tabId, msg) {
 }
 
 /**
- * 给视频找伴随音轨（音画分离站点，如抖音）。按可靠性三级匹配：
+ * 给视频找伴随音轨（音画分离站点，如抖音）。按可靠性四级匹配：
+ *  4. 精确配对：音轨请求时刻最接近 blob: 创建时刻（主世界钩子数据）
  *  3. 抖音音画配对：画面流与音频流 URL 共享同一段 CDN 路径前缀（/media- 之前完全一致）
- *  2. 纪元匹配：音轨是在 since（上一个纪元起点）之后嗅探到的 —— 抖音预加载的
- *     音画是成对抓取的，归属当前视频的窗口内通常只有一条音频流
+ *  2. 纪元匹配：音轨是在 since（上一个纪元起点）之后嗅探到的
  *  1. 时间窗兜底：最近 30 秒内嗅探到的音轨
  */
-function findAudioMate(tabId, videoUrl, since, consumed) {
+function findAudioMate(tabId, videoUrl, since, consumed, blobT) {
   const map = mediaByTab.get(tabId);
   if (!map) return '';
+  const times = hookTimeByTab.get(tabId);
   const vPrefix = String(videoUrl || '').split('/media-')[0];
-  const now = Date.now();
   let best = null;
   for (const e of map.values()) {
     if (e.kind !== 'audio') continue;
-    if (consumed && consumed.has(e.url)) continue;
     let score = 0;
-    if (vPrefix && vPrefix.length > 20 && String(e.url).startsWith(vPrefix)) score = 3;
-    else if (since && e.firstSeen >= since - 5000) score = 2;
-    else if (now - (e.lastSeen || 0) < 30000) score = 1;
+    let dt = Infinity;
+    if (blobT && times && times.has(e.url)) {
+      dt = Math.abs(times.get(e.url) - blobT);
+      if (dt < 15000) score = 4;
+    }
+    if (!score) {
+      if (consumed && consumed.has(e.url)) continue;
+      if (vPrefix && vPrefix.length > 20 && String(e.url).startsWith(vPrefix)) score = 3;
+      else if (since && e.firstSeen >= since - 5000) score = 2;
+      else if (Date.now() - (e.lastSeen || 0) < 30000) score = 1;
+    }
     if (!score) continue;
-    if (!best || score > best.score || (score === best.score && (e.size || 0) > (best.e.size || 0))) best = { e, score };
+    if (!best || score > best.score || (score === best.score && dt < best.dt)) best = { e, score, dt };
   }
   return best ? best.e.url : '';
 }
@@ -419,6 +428,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   soloByTab.delete(tabId);
   bindingByTab.delete(tabId);
   consumedByTab.delete(tabId);
+  hookTimeByTab.delete(tabId);
   persist();
 });
 
@@ -431,6 +441,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     soloByTab.delete(tabId);
     bindingByTab.delete(tabId);
     consumedByTab.delete(tabId);
+    hookTimeByTab.delete(tabId);
     persist();
     updateBadge(tabId);
   }
@@ -539,6 +550,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       switch (msg.type) {
+        case 'page:media': {
+          // 页面主世界钩子（inject.js）上报的媒体流请求，带页面侧精确时刻
+          const tabId = sender?.tab?.id;
+          const url = String(msg.url || '');
+          const t = Number(msg.t) || Date.now();
+          if (tabId == null || tabId < 0 || !url || !/^https?:/i.test(url)) return sendResponse({ ok: true });
+          let times = hookTimeByTab.get(tabId);
+          if (!times) { times = new Map(); hookTimeByTab.set(tabId, times); }
+          times.set(url, t);
+          if (times.size > 200) times.delete(times.keys().next().value);
+          await addMedia(tabId, { url, kind: kindOf(url, ''), mime: '', size: 0, frameId: 0, pageUrl: '' });
+          return sendResponse({ ok: true });
+        }
         case 'page:live': {
           // content script 广播的直播间状态：true=进入直播间（清空媒体、停止嗅探）
           const tabId = sender?.tab?.id;
@@ -569,33 +593,53 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           if (!/^https?:/i.test(src)) {
             // blob:（MSE 播放器，如抖音）→ 归属到真实网络流。
-            // 关键：抖音是滑动前就预加载下一条，新视频的流在上一个纪元期间就被
-            // 抓好了，所以窗口从「上一个纪元开始」算起；并排除已被之前视频消费
-            // 的流（每条流只归属一次），找不到时放宽 consumed 兜底（用户回看场景）
-            const since = prevEpoch ? prevEpoch.since : 0;
+            // 首选：主世界钩子记录了每个 blob: 的创建时刻和每条流的请求时刻。
+            // 播放器为某视频创建 MediaSource 的瞬间会紧接着拉它的画面/音频流，
+            // 按「请求时刻最接近 blob 创建时刻」配对（±15 秒内，相差 2 秒内视为
+            // 同时取体积大的），预加载的其他视频因时刻不同不会混入
+            const blobT = Number(msg.blobT) || 0;
+            const times = hookTimeByTab.get(tabId);
             const mapB = mediaByTab.get(tabId);
-            const pickBest = (ignoreConsumed) => {
-              let best = null;
-              if (!mapB) return best;
+            let best = null;
+            if (blobT && times && mapB) {
               for (const e of mapB.values()) {
                 if (!['mp4', 'webm', 'flv', 'video', 'hls', 'dash'].includes(e.kind)) continue;
-                if (!ignoreConsumed && consumed.has(e.url)) continue;
-                if (since && e.firstSeen < since - 5000) continue;
-                if (!best || (e.size || 0) > (best.size || 0) || ((e.size || 0) === (best.size || 0) && e.lastSeen > best.lastSeen)) best = e;
+                const t = times.get(e.url);
+                if (t == null) continue; // 没有钩子时刻的条目无法精确配对
+                const dt = Math.abs(t - blobT);
+                if (dt > 15000) continue;
+                if (!best || dt < best.dt - 2000 || (Math.abs(dt - best.dt) <= 2000 && (e.size || 0) > (best.e.size || 0))) {
+                  best = { e, dt };
+                }
               }
-              return best;
-            };
-            let best = pickBest(false) || pickBest(true);
-            if (!best) return sendResponse({ ok: true });
-            currentUrl = best.url;
-            audioUrl = findAudioMate(tabId, best.url, since, consumed);
+            }
+            if (!best) {
+              // 兜底：钩子时刻不可用（页面在扩展重载前打开等）→ 退回纪元窗口推断
+              const since = prevEpoch ? prevEpoch.since : 0;
+              const pickBest = (ignoreConsumed) => {
+                let b = null;
+                if (!mapB) return b;
+                for (const e of mapB.values()) {
+                  if (!['mp4', 'webm', 'flv', 'video', 'hls', 'dash'].includes(e.kind)) continue;
+                  if (!ignoreConsumed && consumed.has(e.url)) continue;
+                  if (since && e.firstSeen < since - 5000) continue;
+                  if (!b || (e.size || 0) > (b.size || 0) || ((e.size || 0) === (b.size || 0) && e.lastSeen > b.lastSeen)) b = e;
+                }
+                return b;
+              };
+              const fb = pickBest(false) || pickBest(true);
+              if (!fb) return sendResponse({ ok: true });
+              best = { e: fb, dt: Infinity };
+            }
+            currentUrl = best.e.url;
+            audioUrl = findAudioMate(tabId, currentUrl, prevEpoch ? prevEpoch.since : 0, consumed, blobT);
             // 绑定本视频的流归属，下载时直接用；已消费的流不再参与下一条归属
             bindingByTab.set(tabId, { videoUrl: currentUrl, audioUrl });
             consumed.add(currentUrl);
             if (audioUrl) consumed.add(audioUrl);
             consumedByTab.set(tabId, consumed);
           } else {
-            bindingByTab.set(tabId, { videoUrl: src, audioUrl: findAudioMate(tabId, src, 0, null) });
+            bindingByTab.set(tabId, { videoUrl: src, audioUrl: findAudioMate(tabId, src, 0, null, 0) });
           }
 
           // 纪元：当前视频变化时开启新纪元（之后嗅探到的流归属新视频）

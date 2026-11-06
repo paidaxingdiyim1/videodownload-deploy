@@ -52,6 +52,7 @@
     layer: null,
     items: [],
     isLive: false,
+    blobTimes: new Map(), // blob: 地址 -> 创建时刻（inject.js 主世界钩子上报）
   };
 
   /* ------------------------------ 通信 ------------------------------ */
@@ -127,6 +128,8 @@
       send({
         type: 'page:current',
         src: best.v.currentSrc,
+        // blob: 地址的创建时刻——后台用它把 blob 精确配对到真实网络流
+        blobT: state.blobTimes.get(best.v.currentSrc) || 0,
         // 用「正在播放的这个视频」所在卡片里的描述作为标题（而非全局第一个）
         title: siteTitle(best.v) || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, '')) || '',
         // 信息流站点：弹窗只显示当前视频的链接（防堆积，只识别正在播放的）
@@ -623,6 +626,21 @@
   }
 
   /* ------------------------------ 进度回调 ------------------------------ */
+
+  // 主世界钩子（inject.js）上报：blob 创建时刻 / 媒体流请求时刻
+  window.addEventListener('message', (e) => {
+    const d = e && e.data;
+    if (!d || d.__wvd !== 1) return;
+    if (d.type === 'blob') {
+      state.blobTimes.set(d.url, d.t);
+      if (state.blobTimes.size > 500) {
+        const first = state.blobTimes.keys().next().value;
+        state.blobTimes.delete(first);
+      }
+    } else if (d.type === 'media') {
+      send({ type: 'page:media', url: d.url, t: d.t });
+    }
+  });
 
   chrome.runtime.onMessage.addListener((msg) => {
     // 弹窗「刷新」：清空记录后页面立刻重新上报当前视频与标题
