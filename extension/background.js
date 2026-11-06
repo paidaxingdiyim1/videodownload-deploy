@@ -1,0 +1,496 @@
+'use strict';
+
+/* ==========================================================================
+ *  网页视频下载器 · 后台 Service Worker
+ *  职责：
+ *   1. 用 webRequest 嗅探页面里加载的媒体资源（m3u8 / mpd / mp4 / webm ...）
+ *   2. 按标签页维护资源列表，供 content script 和 popup 查询
+ *   3. 收到下载请求时补全 Referer / Cookie / UA，转发给本机服务
+ *   4. 轮询本机服务任务进度，推送到对应标签页
+ * ========================================================================== */
+
+const DEFAULT_CONFIG = {
+  /** 远程服务器（局域网服务器，如 http://yourserver:8765） */
+  serverUrl: 'http://127.0.0.1:8765',
+  serverToken: '',
+  /** 本机服务（视频保存到这台电脑时使用） */
+  localUrl: 'http://127.0.0.1:8765',
+  localToken: '',
+  /** 保存位置：server=服务器 local=本机 ask=每次下载时询问 */
+  saveTarget: 'server',
+  autoButton: true,
+  minSize: 120,
+  mode: 'auto', // auto | native | ytdlp
+};
+
+const MEDIA_RE = /\.(m3u8|mpd|mp4|webm|flv|m4v|mov|mkv|m4a|mp3|aac)(\?|#|$)/i;
+const IGNORE_RE = /\.(ts|m4s|aac\.seg|jpg|jpeg|png|gif|webp|svg|css|js|json|html?)(\?|#|$)/i;
+
+/** tabId -> Map(url -> entry) */
+const mediaByTab = new Map();
+/** tabId -> 页面标题 */
+const tabTitles = new Map();
+/** taskId -> {tabId, frameId} */
+const activeTasks = new Map();
+
+let storageReady = null;
+let pollTimer = null;
+
+/* ------------------------------ 存储 ------------------------------ */
+
+function ensureLoaded() {
+  if (storageReady) return storageReady;
+  storageReady = (async () => {
+    try {
+      const bag = await chrome.storage.session.get('media');
+      const raw = bag.media || {};
+      for (const [tabId, list] of Object.entries(raw)) {
+        const m = new Map();
+        for (const e of list) m.set(e.url, e);
+        mediaByTab.set(Number(tabId), m);
+      }
+    } catch (_) {}
+  })();
+  return storageReady;
+}
+
+let persistTimer = null;
+function persist() {
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(async () => {
+    try {
+      const out = {};
+      for (const [tabId, m] of mediaByTab) out[tabId] = [...m.values()].slice(-80);
+      await chrome.storage.session.set({ media: out });
+    } catch (_) {}
+  }, 400);
+}
+
+/* ------------------------------ 配置 ------------------------------ */
+
+async function getConfig() {
+  const bag = await chrome.storage.local.get('config');
+  const cfg = { ...DEFAULT_CONFIG, ...(bag.config || {}) };
+  // 旧版本迁移：原来只有一个 token/serverUrl，视作服务器端点的凭据
+  if (bag.config && bag.config.token && !bag.config.serverToken) cfg.serverToken = bag.config.token;
+  if (!['server', 'local', 'ask'].includes(cfg.saveTarget)) cfg.saveTarget = 'server';
+  return cfg;
+}
+
+async function setConfig(patch) {
+  const cfg = { ...(await getConfig()), ...patch };
+  await chrome.storage.local.set({ config: cfg });
+  return cfg;
+}
+
+/** 解析目标端点：显式指定优先，否则用默认保存位置（ask 时回落到服务器） */
+function resolveTarget(target, cfg) {
+  if (target === 'local' || target === 'server') return target;
+  return cfg.saveTarget === 'local' ? 'local' : 'server';
+}
+
+/** 目标端点对应的地址与 Token */
+function endpointFor(cfg, target) {
+  return target === 'local'
+    ? { base: (cfg.localUrl || DEFAULT_CONFIG.localUrl).replace(/\/+$/, ''), token: cfg.localToken || '' }
+    : { base: (cfg.serverUrl || DEFAULT_CONFIG.serverUrl).replace(/\/+$/, ''), token: cfg.serverToken || '' };
+}
+
+const TOKEN_KEY = { server: 'serverToken', local: 'localToken' };
+
+let cachedToken = { server: null, local: null };
+async function getToken(target) {
+  if (cachedToken[target]) return cachedToken[target];
+  const cfg = await getConfig();
+  cachedToken[target] = cfg[TOKEN_KEY[target]] || '';
+  return cachedToken[target];
+}
+
+/* ------------------------------ 与下载服务通信 ------------------------------ */
+
+async function api(pathname, { method = 'GET', body, timeout = 8000, retryToken = true, target } = {}) {
+  const cfg = await getConfig();
+  const t = resolveTarget(target, cfg);
+  const { base } = endpointFor(cfg, t);
+  let token = await getToken(t);
+  if (!token) token = await pair(t);
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const res = await fetch(base + pathname, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Auth-Token': token || '',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    });
+    if (res.status === 401 && retryToken) {
+      cachedToken[t] = null;
+      const fresh = await pair(t, true);
+      if (fresh) return api(pathname, { method, body, timeout, retryToken: false, target: t });
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 扩展首次使用时向对应服务要一个 token */
+async function pair(target = 'server', force) {
+  try {
+    const cfg = await getConfig();
+    const t = resolveTarget(target, cfg);
+    const { base } = endpointFor(cfg, t);
+    const res = await fetch(base + '/api/pair', { method: 'POST' });
+    if (!res.ok) return '';
+    const data = await res.json();
+    if (data.token !== undefined) {
+      cachedToken[t] = data.token;
+      await setConfig({ [TOKEN_KEY[t]]: data.token });
+      return data.token;
+    }
+  } catch (_) {}
+  return '';
+}
+
+async function health(target) {
+  const cfg = await getConfig();
+  const t = resolveTarget(target, cfg);
+  const { base } = endpointFor(cfg, t);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 2500);
+  try {
+    const res = await fetch(base + '/api/health', { signal: ctrl.signal });
+    return await res.json();
+  } catch (e) {
+    return { ok: false, error: t === 'local' ? '无法连接本机服务' : '无法连接服务器服务' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* ------------------------------ 媒体嗅探 ------------------------------ */
+
+function kindOf(url, mime) {
+  const m = String(mime || '').toLowerCase();
+  const u = String(url).toLowerCase();
+  if (m.includes('mpegurl') || /\.m3u8(\?|#|$)/.test(u)) return 'hls';
+  if (m.includes('dash') || /\.mpd(\?|#|$)/.test(u)) return 'dash';
+  if (m.startsWith('audio/') || /\.(m4a|mp3|aac)(\?|#|$)/.test(u)) return 'audio';
+  if (m.includes('webm') || /\.webm(\?|#|$)/.test(u)) return 'webm';
+  if (m.includes('flv') || /\.flv(\?|#|$)/.test(u)) return 'flv';
+  if (m.includes('mp4') || /\.(mp4|m4v|mov)(\?|#|$)/.test(u)) return 'mp4';
+  return 'video';
+}
+
+function isCandidate(url, mime) {
+  if (!url || !/^https?:/i.test(url)) return false;
+  if (IGNORE_RE.test(url)) return false;
+  const m = String(mime || '').toLowerCase();
+  if (m && !/^(video\/|audio\/|application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml|octet-stream))/.test(m) && !MEDIA_RE.test(url)) {
+    return false;
+  }
+  return MEDIA_RE.test(url) || /^(video|audio)\//.test(m) || m.includes('mpegurl') || m.includes('dash+xml');
+}
+
+async function addMedia(tabId, entry) {
+  if (tabId == null || tabId < 0) return;
+  await ensureLoaded();
+  let map = mediaByTab.get(tabId);
+  if (!map) {
+    map = new Map();
+    mediaByTab.set(tabId, map);
+  }
+  const existing = map.get(entry.url);
+  if (existing) {
+    existing.lastSeen = Date.now();
+    if (entry.size && !existing.size) existing.size = entry.size;
+    if (entry.mime && !existing.mime) existing.mime = entry.mime;
+    return;
+  }
+
+  entry.id = 'm' + Math.random().toString(36).slice(2, 9);
+  entry.firstSeen = entry.lastSeen = Date.now();
+  entry.pageTitle = tabTitles.get(tabId) || '';
+  entry.pageUrl = entry.pageUrl || '';
+  map.set(entry.url, entry);
+
+  // 同一标签页最多留 80 条，淘汰最早的弱资源
+  if (map.size > 80) {
+    const first = [...map.keys()][0];
+    map.delete(first);
+  }
+  persist();
+  updateBadge(tabId);
+  notifyTab(tabId, { type: 'media:changed' });
+}
+
+function updateBadge(tabId) {
+  const map = mediaByTab.get(tabId);
+  const n = map ? [...map.values()].filter((x) => ['hls', 'dash', 'mp4', 'webm', 'flv'].includes(x.kind)).length : 0;
+  chrome.action.setBadgeText({ tabId, text: n ? String(Math.min(n, 99)) : '' }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ tabId, color: '#2b6cff' }).catch(() => {});
+}
+
+function notifyTab(tabId, msg) {
+  chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+}
+
+/* ------------------------------ webRequest 监听 ------------------------------ */
+
+const urlCache = new Map(); // requestId -> {url, tabId}
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (d) => {
+    if (d.tabId == null || d.tabId < 0) return;
+    if (!isCandidate(d.url, '')) return;
+    urlCache.set(d.requestId, { url: d.url, tabId: d.tabId, timeStamp: d.timeStamp });
+    if (urlCache.size > 400) urlCache.delete(urlCache.keys().next().value);
+    addMedia(d.tabId, {
+      url: d.url,
+      kind: kindOf(d.url, ''),
+      mime: '',
+      size: 0,
+      frameId: d.frameId,
+      pageUrl: d.initiator || '',
+    });
+  },
+  { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object'] }
+);
+
+chrome.webRequest.onHeadersReceived.addListener(
+  (d) => {
+    if (d.tabId == null || d.tabId < 0) return;
+    const headers = d.responseHeaders || [];
+    const get = (name) => {
+      const h = headers.find((x) => x.name.toLowerCase() === name);
+      return h ? h.value : '';
+    };
+    const mime = get('content-type') || '';
+    const len = Number(get('content-length') || 0);
+
+    if (!isCandidate(d.url, mime)) return;
+    const kind = kindOf(d.url, mime);
+    const isManifest = kind === 'hls' || kind === 'dash';
+    if (!isManifest && len && len < 65536) return; // 太小，多半是广告/封面
+
+    addMedia(d.tabId, {
+      url: d.url,
+      kind,
+      mime,
+      size: len,
+      frameId: d.frameId,
+      pageUrl: d.initiator || '',
+    });
+  },
+  { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object'] },
+  ['responseHeaders']
+);
+
+/* 标签页生命周期 */
+chrome.tabs.onRemoved.addListener((tabId) => {
+  mediaByTab.delete(tabId);
+  tabTitles.delete(tabId);
+  persist();
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.title) tabTitles.set(tabId, changeInfo.title);
+  if (changeInfo.url) {
+    mediaByTab.delete(tabId);
+    persist();
+    updateBadge(tabId);
+  }
+});
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  chrome.tabs.get(tabId).then((t) => tabTitles.set(tabId, t.title || '')).catch(() => {});
+  updateBadge(tabId);
+});
+
+/* ------------------------------ 下载流程 ------------------------------ */
+
+async function collectCookies(url) {
+  try {
+    const list = await chrome.cookies.getAll({ url });
+    return (list || []).filter((c) => !/^__(ga|gid|utm)/.test(c.name)).map((c) => ({ name: c.name, value: c.value, domain: c.domain }));
+  } catch (_) {
+    return [];
+  }
+}
+
+async function startDownload(msg, sender) {
+  const cfg = await getConfig();
+  const tabId = sender?.tab?.id ?? msg.tabId ?? -1;
+  const pageUrl = sender?.tab?.url || msg.referer || '';
+  const cookies = await collectCookies(msg.url);
+  const target = resolveTarget(msg.target, cfg);
+
+  const payload = {
+    url: msg.url,
+    title: msg.title || tabTitles.get(tabId) || '',
+    kind: msg.kind || 'auto',
+    mode: msg.mode || cfg.mode || 'auto',
+    quality: msg.quality || '',
+    format: msg.format || '',
+    referer: msg.referer || pageUrl,
+    userAgent: navigator.userAgent,
+    cookies,
+  };
+
+  const data = await api('/api/download', { method: 'POST', body: payload, timeout: 15000, target });
+  if (!data.ok || !data.task) throw new Error(data.error || '创建任务失败');
+
+  activeTasks.set(data.task.id, { tabId, frameId: sender?.frameId ?? 0, target });
+  ensurePolling();
+  return data.task;
+}
+
+/* 轮询进度（Service Worker 里不能用 EventSource）；任务可能分布在服务器/本机两个端点 */
+function ensurePolling() {
+  if (pollTimer) return;
+  pollTimer = setTimeout(pollOnce, 800);
+}
+
+async function pollOnce() {
+  pollTimer = null;
+  if (!activeTasks.size) return;
+
+  // 按 target 分组，各查各的服务
+  const byTarget = new Map();
+  for (const [id, info] of activeTasks) {
+    const t = info.target || 'server';
+    if (!byTarget.has(t)) byTarget.set(t, new Map());
+    byTarget.get(t).set(id, info);
+  }
+
+  for (const [target, ids] of byTarget) {
+    try {
+      const data = await api('/api/tasks', { timeout: 6000, target });
+      const list = data.tasks || [];
+      const byId = new Map(list.map((t) => [t.id, t]));
+      for (const [id, info] of ids) {
+        const t = byId.get(id);
+        if (!t) {
+          activeTasks.delete(id);
+          continue;
+        }
+        chrome.tabs.sendMessage(info.tabId, { type: 'task:update', task: t, target }, { frameId: info.frameId }).catch(() => {
+          chrome.tabs.sendMessage(info.tabId, { type: 'task:update', task: t, target }).catch(() => {});
+        });
+        if (['done', 'error', 'canceled'].includes(t.status)) {
+          activeTasks.delete(id);
+        }
+      }
+    } catch (_) {
+      // 该服务可能没启动，减少无效轮询
+    }
+  }
+  if (activeTasks.size) pollTimer = setTimeout(pollOnce, 1200);
+}
+
+/* ------------------------------ 消息路由 ------------------------------ */
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  (async () => {
+    try {
+      switch (msg.type) {
+        case 'media:list': {
+          await ensureLoaded();
+          const tabId = msg.tabId ?? sender?.tab?.id;
+          const map = mediaByTab.get(tabId);
+          const items = map ? [...map.values()].sort((a, b) => b.lastSeen - a.lastSeen) : [];
+          return sendResponse({ ok: true, items, tabId, title: tabTitles.get(tabId) || '' });
+        }
+        case 'media:clear': {
+          await ensureLoaded();
+          const tabId = msg.tabId ?? sender?.tab?.id;
+          mediaByTab.delete(tabId);
+          persist();
+          updateBadge(tabId);
+          notifyTab(tabId, { type: 'media:changed' });
+          return sendResponse({ ok: true });
+        }
+        case 'download': {
+          const task = await startDownload(msg, sender);
+          return sendResponse({ ok: true, task });
+        }
+        case 'tasks': {
+          // 合并服务器 + 本机两个端点的任务列表
+          const results = await Promise.allSettled([
+            api('/api/tasks', { timeout: 6000, target: 'server' }),
+            api('/api/tasks', { timeout: 6000, target: 'local' }),
+          ]);
+          const all = [];
+          let any = false;
+          for (const r of results) {
+            if (r.status === 'fulfilled' && r.value && r.value.ok) {
+              any = true;
+              all.push(...(r.value.tasks || []));
+            }
+          }
+          return sendResponse({ ok: true, tasks: all, connected: any });
+        }
+        case 'task:cancel': {
+          const cfg = await getConfig();
+          const t = resolveTarget(msg.target, cfg);
+          // 优先按已知任务的端点取消；找不到就两端都试
+          const known = activeTasks.get(msg.id);
+          const order = known ? [known.target] : ['server', 'local'];
+          for (const target of order) {
+            try {
+              await api(`/api/tasks/${msg.id}/cancel`, { method: 'POST', target });
+              return sendResponse({ ok: true });
+            } catch (_) {}
+          }
+          return sendResponse({ ok: false, error: '任务不存在或已结束' });
+        }
+        case 'tasks:clear': {
+          // 两个端点都清一遍，失败不阻塞
+          await Promise.allSettled([
+            api('/api/tasks/clear', { method: 'POST', target: 'server' }),
+            api('/api/tasks/clear', { method: 'POST', target: 'local' }),
+          ]);
+          return sendResponse({ ok: true });
+        }
+        case 'openFolder': {
+          const data = await api('/api/open-folder', { method: 'POST', target: msg.target });
+          return sendResponse({ ok: true, dir: data.dir });
+        }
+        case 'health': {
+          return sendResponse(await health(msg.target));
+        }
+        case 'pair': {
+          const token = await pair(msg.target || 'server', true);
+          return sendResponse({ ok: !!token, token });
+        }
+        case 'config:get': {
+          return sendResponse({ ok: true, config: await getConfig() });
+        }
+        case 'config:set': {
+          const cfg = await setConfig(msg.patch || {});
+          cachedToken = { server: cfg.serverToken || '', local: cfg.localToken || '' };
+          return sendResponse({ ok: true, config: cfg });
+        }
+        default:
+          return sendResponse({ ok: false, error: '未知消息类型: ' + msg.type });
+      }
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message || String(e) });
+    }
+  })();
+  return true; // 异步响应
+});
+
+chrome.runtime.onInstalled.addListener(async () => {
+  await ensureLoaded();
+  await getConfig();
+  // 两个端点都尝试预配对（本机/服务器若在线则直接拿到 Token）
+  pair('server').catch(() => {});
+  pair('local').catch(() => {});
+});

@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "网页视频下载器 · 本地解密版",
+  "version": "1.1.0",
+  "description": "在网页每个视频旁浮出下载按钮，自动识别 HLS/DASH/MP4 资源，交给本机服务解密下载。",
+  "minimum_chrome_version": "110",
+  "permissions": [
+    "webRequest",
+    "storage",
+    "tabs",
+    "cookies",
+    "scripting"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "网页视频下载器",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

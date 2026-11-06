@@ -1,0 +1,16 @@
+{
+  "name": "wvd-local-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "网页视频下载 · 本地解密下载服务（HLS AES-128 / 直链 / DASH）",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js --port=8765",
+    "selftest": "node test/selftest.js",
+    "e2e": "node test/e2e.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="hd">
+    <div class="brand"><span class="logo"></span>网页视频下载器</div>
+    <div class="status" id="status"><span class="dot"></span><span class="stxt">检测中</span></div>
+  </header>
+
+  <div class="tgt">
+    <span class="tgt-lb">保存到</span>
+    <div class="tgt-sw" id="tgt">
+      <button data-t="server" type="button">服务器</button>
+      <button data-t="local" type="button">本机</button>
+    </div>
+  </div>
+
+  <section class="sec">
+    <div class="sec-hd">本页资源 <span id="count" class="count">0</span>
+      <button class="lnk" id="refresh">刷新</button>
+    </div>
+    <div class="list" id="media-list"><div class="empty">加载中…</div></div>
+  </section>
+
+  <section class="sec" id="tasks-sec" hidden>
+    <div class="sec-hd">下载任务</div>
+    <div class="list" id="task-list"></div>
+  </section>
+
+  <footer class="ft">
+    <button class="btn" id="folder">打开下载目录</button>
+    <button class="btn" id="options">设置</button>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

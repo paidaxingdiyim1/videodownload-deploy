@@ -1,0 +1,32 @@
+{
+  "name": "web-video-downloader",
+  "version": "1.0.0",
+  "private": true,
+  "description": "浏览器扩展 + 本地服务：识别网页视频，带 Cookie 请求并解密 HLS/DASH 分片后下载",
+  "keywords": [
+    "video-downloader",
+    "hls",
+    "m3u8",
+    "aes-128",
+    "dash",
+    "chrome-extension",
+    "yt-dlp",
+    "ffmpeg"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/src/server.js",
+    "setup": "node scripts/setup.js",
+    "build": "node build/build-sea.js",
+    "test": "node server/test/selftest.js",
+    "test:e2e": "node server/test/e2e.js",
+    "test:exe": "node build/test-exe.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "postject": "^1.0.0-alpha.6"
+  }
+}

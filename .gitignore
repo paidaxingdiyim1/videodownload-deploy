@@ -1,0 +1,39 @@
+# 依赖
+node_modules/
+
+# 运行产物
+downloads/
+logs/
+
+# 本机配置：含 token 与绝对路径，首次运行自动生成
+server/config.json
+
+# 内置二进制：体积过大，用 scripts/setup.js 获取
+server/bin/
+
+# 打包中间产物与产物（exe 不入库，按 README 自行构建）
+build/server.cjs
+build/server.blob
+build/sea-config.json
+build/tools/
+dist/
+*.exe
+
+# 由本机绝对路径生成的启动入口，仅本机使用
+网页视频下载器.cmd
+scripts/make-launcher.js
+
+# 测试临时目录
+server/test/tmp/
+server/test/tmp-e2e/
+
+# 工具与编辑器
+.workbuddy/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# 测试临时目录
+server/test/tmp-naming/

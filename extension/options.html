@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>网页视频下载器 · 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="wrap">
+    <h1>网页视频下载器 · 设置</h1>
+    <p class="lead">扩展负责识别网页里的视频流，真正的下载和解密由下载服务完成。请先在服务所在电脑上运行 <code>start.bat</code>（本机）或 <code>start-lan.bat</code>（局域网服务器）。</p>
+
+    <section class="card">
+      <h2>保存位置</h2>
+      <div class="field">
+        <label>默认保存到哪里？</label>
+        <select id="saveTarget">
+          <option value="server">服务器（局域网服务器）</option>
+          <option value="local">本机（这台电脑）</option>
+          <option value="ask">每次下载时询问</option>
+        </select>
+        <p class="hint">视频旁的下载按钮和资源面板按这里的选择保存；选「每次询问」时，点下载会弹出「服务器 / 本机」小菜单。扩展弹窗顶部也能随时切换。</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>服务器（远程）</h2>
+      <div class="field">
+        <label>服务地址</label>
+        <input id="serverUrl" type="text" placeholder="http://yourserver:8765" spellcheck="false">
+        <p class="hint">局域网服务器地址，如 <code>http://yourserver:8765</code> 或 <code>http://192.168.x.x:8765</code>。端口变动请同步修改。</p>
+      </div>
+      <div class="field">
+        <label>访问 Token</label>
+        <div class="row">
+          <input id="serverToken" type="text" placeholder="点右侧按钮自动获取" spellcheck="false">
+          <button id="pairServer" class="btn">自动配对</button>
+        </div>
+        <p class="hint">Token 会打印在服务器上 start-lan.bat 的窗口里，可从那里复制。</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>本机服务</h2>
+      <div class="field">
+        <label>服务地址</label>
+        <input id="localUrl" type="text" placeholder="http://127.0.0.1:8765" spellcheck="false">
+        <p class="hint">保存到本机时使用，一般保持默认即可。</p>
+      </div>
+      <div class="field">
+        <label>访问 Token</label>
+        <div class="row">
+          <input id="localToken" type="text" placeholder="点右侧按钮自动获取" spellcheck="false">
+          <button id="pairLocal" class="btn">自动配对</button>
+        </div>
+        <p class="hint">Token 也会打印在本机 start.bat 的窗口里，可从那里复制。</p>
+      </div>
+      <div class="row actions">
+        <button id="test" class="btn">测试连接</button>
+        <span id="test-result" class="result"></span>
+      </div>
+      <div id="server-info" class="info" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2>下载行为</h2>
+      <div class="field">
+        <label>引擎模式</label>
+        <select id="mode">
+          <option value="auto">自动（推荐：直链/m3u8 走本地解密，复杂站点走 yt-dlp）</option>
+          <option value="native">只用本地解密（不依赖 yt-dlp）</option>
+          <option value="ytdlp">尽量用 yt-dlp</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="check"><input id="autoButton" type="checkbox"> 在每个视频右上角显示下载按钮</label>
+        <p class="hint">关闭后仍可通过扩展图标里的资源列表下载。</p>
+      </div>
+      <div class="field">
+        <label>按钮显示的最小视频尺寸（像素）</label>
+        <input id="minSize" type="number" min="60" max="800" step="10">
+        <p class="hint">小于该宽度的视频（多为广告/装饰图）不显示按钮。</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>说明</h2>
+      <ul class="notes">
+        <li>支持 HLS（m3u8，含 AES-128 加密分片）、DASH、直链 MP4/WebM 等。</li>
+        <li>加密分片由本机服务用分片密钥解密后按序拼接，未安装 ffmpeg 时保存为 <code>.ts</code>，装上后自动转 <code>.mp4</code>。</li>
+        <li>需要登录的视频会自动带上当前页面的 Cookie 和 Referer。</li>
+        <li>请只下载你有权保存的内容，并遵守目标站点的服务条款与当地法律。</li>
+      </ul>
+    </section>
+
+    <div class="save-bar">
+      <button id="save" class="btn primary">保存设置</button>
+      <span id="saved" class="saved"></span>
+    </div>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
