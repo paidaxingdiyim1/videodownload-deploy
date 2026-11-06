@@ -11,7 +11,7 @@ const tasks = require('./tasks');
 const ytdlp = require('./ytdlp');
 const util = require('./util');
 
-const VERSION = '1.4.1';
+const VERSION = '1.5.0';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');

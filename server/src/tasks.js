@@ -135,6 +135,10 @@ class TaskStore {
       id: uid,
       url: input.url,
       title,
+      // 标题来源：client=扩展传来的真实标题（页面文案），guess=从 URL 猜的占位。
+      // ytdlp 引擎只对 guess 标题做探测覆盖（yt-dlp 对 CDN 裸直链探测出的
+      // title 就是文件名 media-video-hvc1 之类，会反过来顶掉正确标题）
+      titleSource: rawTitle && !PLACEHOLDER.test(rawTitle) ? 'client' : 'guess',
       kind: input.kind || 'auto',
       mode: input.mode || 'auto',
       quality: input.quality || '',
@@ -247,8 +251,9 @@ class TaskStore {
       task.engine = engine;
       this.log(task, `引擎：${engine}`);
 
-      // yt-dlp 引擎：优先用 yt-dlp 解析出的真实标题（抖音等站点网页标题是品牌标语）
-      if (engine === 'ytdlp') {
+      // yt-dlp 引擎：仅在扩展没给有效标题时，用 yt-dlp 探测的标题覆盖
+      // （抖音等 CDN 裸直链 probe 出的 title 是文件名，不能覆盖页面真实文案）
+      if (engine === 'ytdlp' && task.titleSource !== 'client') {
         try {
           const info = await ytdlp.probe(task.url, { referer: task.referer });
           const TITLE_JUNK = /记录美好生活|^抖音[\s-]*$|^douyin[\s-]*$/i;

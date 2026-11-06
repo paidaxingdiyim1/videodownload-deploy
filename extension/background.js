@@ -48,6 +48,10 @@ const liveByTab = new Map();
 const epochByTab = new Map();
 /** tabId -> true（信息流站点：弹窗只显示当前视频的链接，防堆积） */
 const soloByTab = new Map();
+/** tabId -> {videoUrl, audioUrl} 当前视频的流绑定（blob 归属决策结果，下载时直接用） */
+const bindingByTab = new Map();
+/** tabId -> Set(urls) 已被之前视频消费的流，归属新视频时排除（每条流只归属一次） */
+const consumedByTab = new Map();
 /** taskId -> {tabId, frameId} */
 const activeTasks = new Map();
 
@@ -328,10 +332,11 @@ function notifyTab(tabId, msg) {
 /**
  * 给视频找伴随音轨（音画分离站点，如抖音）。按可靠性三级匹配：
  *  3. 抖音音画配对：画面流与音频流 URL 共享同一段 CDN 路径前缀（/media- 之前完全一致）
- *  2. 纪元匹配：音轨是在当前视频开始播放前后嗅探到的
+ *  2. 纪元匹配：音轨是在 since（上一个纪元起点）之后嗅探到的 —— 抖音预加载的
+ *     音画是成对抓取的，归属当前视频的窗口内通常只有一条音频流
  *  1. 时间窗兜底：最近 30 秒内嗅探到的音轨
  */
-function findAudioMate(tabId, videoUrl, since) {
+function findAudioMate(tabId, videoUrl, since, consumed) {
   const map = mediaByTab.get(tabId);
   if (!map) return '';
   const vPrefix = String(videoUrl || '').split('/media-')[0];
@@ -339,12 +344,13 @@ function findAudioMate(tabId, videoUrl, since) {
   let best = null;
   for (const e of map.values()) {
     if (e.kind !== 'audio') continue;
+    if (consumed && consumed.has(e.url)) continue;
     let score = 0;
     if (vPrefix && vPrefix.length > 20 && String(e.url).startsWith(vPrefix)) score = 3;
     else if (since && e.firstSeen >= since - 5000) score = 2;
     else if (now - (e.lastSeen || 0) < 30000) score = 1;
     if (!score) continue;
-    if (!best || score > best.score) best = { e, score };
+    if (!best || score > best.score || (score === best.score && (e.size || 0) > (best.e.size || 0))) best = { e, score };
   }
   return best ? best.e.url : '';
 }
@@ -411,6 +417,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   liveByTab.delete(tabId);
   epochByTab.delete(tabId);
   soloByTab.delete(tabId);
+  bindingByTab.delete(tabId);
+  consumedByTab.delete(tabId);
   persist();
 });
 
@@ -421,6 +429,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     liveByTab.delete(tabId); // 导航到新页面时重置直播间状态
     epochByTab.delete(tabId);
     soloByTab.delete(tabId);
+    bindingByTab.delete(tabId);
+    consumedByTab.delete(tabId);
     persist();
     updateBadge(tabId);
   }
@@ -461,10 +471,15 @@ async function startDownload(msg, sender) {
     cookies,
   };
 
-  // 音画分离站点（抖音等）：统一在后台配音轨（这里有完整嗅探记录 + 纪元归属，
-  // 比 content/popup 各自匹配更可靠），content/popup 传来的 audioUrl 一律忽略
+  // 音画分离站点（抖音等）：统一在后台配音轨。优先用 page:current 归属时
+  // 已经绑定好的配对（blob 归属决策时连同音轨一起选定，最可靠），否则兜底匹配
   if (payload.kind !== 'audio' && ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'auto'].includes(payload.kind)) {
-    payload.audioUrl = findAudioMate(tabId, payload.url, (epochByTab.get(tabId) || {}).since || 0);
+    const binding = bindingByTab.get(tabId);
+    if (binding && binding.videoUrl === payload.url) {
+      payload.audioUrl = binding.audioUrl || '';
+    } else {
+      payload.audioUrl = findAudioMate(tabId, payload.url, (epochByTab.get(tabId) || {}).since || 0, consumedByTab.get(tabId));
+    }
   }
 
   const data = await api('/api/download', { method: 'POST', body: payload, timeout: 15000, target });
@@ -548,23 +563,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (msg.solo != null) soloByTab.set(tabId, !!msg.solo);
 
           const prevEpoch = epochByTab.get(tabId);
+          const consumed = consumedByTab.get(tabId) || new Set();
           let currentUrl = src;
+          let audioUrl = '';
 
           if (!/^https?:/i.test(src)) {
-            // blob: → 归属到当前纪元（本视频开始播放前后）嗅探到的主画面流，
-            // 优先体积最大的（正片而非预览），同体积取最新的
+            // blob:（MSE 播放器，如抖音）→ 归属到真实网络流。
+            // 关键：抖音是滑动前就预加载下一条，新视频的流在上一个纪元期间就被
+            // 抓好了，所以窗口从「上一个纪元开始」算起；并排除已被之前视频消费
+            // 的流（每条流只归属一次），找不到时放宽 consumed 兜底（用户回看场景）
             const since = prevEpoch ? prevEpoch.since : 0;
-            let best = null;
             const mapB = mediaByTab.get(tabId);
-            if (mapB) {
+            const pickBest = (ignoreConsumed) => {
+              let best = null;
+              if (!mapB) return best;
               for (const e of mapB.values()) {
                 if (!['mp4', 'webm', 'flv', 'video', 'hls', 'dash'].includes(e.kind)) continue;
+                if (!ignoreConsumed && consumed.has(e.url)) continue;
                 if (since && e.firstSeen < since - 5000) continue;
                 if (!best || (e.size || 0) > (best.size || 0) || ((e.size || 0) === (best.size || 0) && e.lastSeen > best.lastSeen)) best = e;
               }
-            }
+              return best;
+            };
+            let best = pickBest(false) || pickBest(true);
             if (!best) return sendResponse({ ok: true });
             currentUrl = best.url;
+            audioUrl = findAudioMate(tabId, best.url, since, consumed);
+            // 绑定本视频的流归属，下载时直接用；已消费的流不再参与下一条归属
+            bindingByTab.set(tabId, { videoUrl: currentUrl, audioUrl });
+            consumed.add(currentUrl);
+            if (audioUrl) consumed.add(audioUrl);
+            consumedByTab.set(tabId, consumed);
+          } else {
+            bindingByTab.set(tabId, { videoUrl: src, audioUrl: findAudioMate(tabId, src, 0, null) });
           }
 
           // 纪元：当前视频变化时开启新纪元（之后嗅探到的流归属新视频）
