@@ -547,14 +547,26 @@ async function collectCookies(url) {
   }
 }
 
+/** 链接解析时把短链/分享域名映射到主域采集登录 Cookie（B站高清 SESSDATA / 抖音无水印需要） */
+function cookieDomainFor(url, kind) {
+  if (kind !== 'page') return url;
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    if (/bilibili\.com|b23\.tv$/.test(h)) return 'https://www.bilibili.com';
+    if (/douyin\.com|iesdouyin\.com$/.test(h)) return 'https://www.douyin.com';
+    if (/kuaishou\.com|chenzhongtech\.com|gifshow\.com$/.test(h)) return 'https://www.kuaishou.com';
+  } catch (_) {}
+  return url;
+}
+
 async function startDownload(msg, sender) {
   const cfg = await getConfig();
   const tabId = sender?.tab?.id ?? msg.tabId ?? -1;
   const pageUrl = sender?.tab?.url || msg.referer || '';
-  const cookies = await collectCookies(msg.url);
+  const kind = msg.kind || 'auto';
+  const cookies = await collectCookies(cookieDomainFor(msg.url, kind));
   const target = resolveTarget(msg.target, cfg);
 
-  const kind = msg.kind || 'auto';
   // 链接解析（kind=page）标题留空，交给 yt-dlp 解析真实标题；其它用页面标题兜底
   const title = kind === 'page' ? (msg.title || '') : (msg.title || tabTitles.get(tabId) || '');
 
