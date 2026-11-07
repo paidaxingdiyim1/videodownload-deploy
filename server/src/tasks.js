@@ -311,8 +311,8 @@ class TaskStore {
       const canceled = controller.signal.aborted;
       task.status = canceled ? 'canceled' : 'error';
       task.stage = canceled ? 'canceled' : 'error';
-      task.error = canceled ? '已取消' : e.message;
-      this.log(task, (canceled ? '已取消：' : '失败：') + e.message);
+      task.error = canceled ? '已取消' : friendlyError(e.message);
+      this.log(task, (canceled ? '已取消：' : '失败：') + task.error);
       this.emit('done', this.snapshot(task));
       try { cleanupTmp(tmpFile, null); } catch (_) {}
     } finally {
@@ -382,6 +382,21 @@ class TaskStore {
     }
     this.emit('cleared', {});
   }
+}
+
+/** 把 yt-dlp 等底层英文错误翻译成用户能看懂的提示 */
+function friendlyError(msg) {
+  const s = String(msg || '');
+  if (/Fresh cookies/i.test(s)) {
+    return '抖音需要登录状态：请先在浏览器打开并登录 douyin.com（获取 Cookie），再重新解析该链接';
+  }
+  if (/invalid Netscape/i.test(s)) {
+    return 'Cookie 解析出错（内部格式问题，请反馈）';
+  }
+  if (/Unsupported url scheme/i.test(s)) {
+    return '链接格式不支持（可能是页面里的虚拟地址，请改用分享链接）';
+  }
+  return s;
 }
 
 function moveFile(from, to) {
