@@ -552,7 +552,9 @@ async function startDownload(msg, sender) {
 
   // 音画分离站点（抖音等）：统一在后台配音轨。优先用 page:current 归属时
   // 已经绑定好的配对（blob 归属决策时连同音轨一起选定，最可靠），否则兜底匹配
-  if (payload.kind !== 'audio' && ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'auto'].includes(payload.kind)) {
+  if (payload.kind === 'page') {
+    payload.mode = 'ytdlp'; // 作品页地址必须走 yt-dlp 解析
+  } else if (payload.kind !== 'audio' && ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'auto'].includes(payload.kind)) {
     const binding = bindingByTab.get(tabId);
     if (binding && binding.videoUrl === payload.url) {
       payload.audioUrl = binding.audioUrl || '';
@@ -658,6 +660,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const consumed = consumedByTab.get(tabId) || new Set();
           let currentUrl = src;
           let audioUrl = '';
+
+          // 抖音特化（最优先）：content 拿到了当前作品的数据——
+          //  a) feed 接口解析出的播放地址（画面+音频），按作品 ID 精确匹配
+          //  b) 作品页地址（分享链接的规范化 URL），交给 yt-dlp 解析
+          // 都不再靠时间/时长猜测
+          const aweme = (msg.aweme && /^https?:/i.test(msg.aweme.video || '')) ? msg.aweme : null;
+          const awemeId = String(msg.awemeId || '');
+          const awemeTitle = String(msg.title || '').trim() || (aweme && aweme.desc) || '';
+          if (aweme) {
+            bindingByTab.set(tabId, { videoUrl: aweme.video, audioUrl: aweme.audio || '' });
+            currentSrcByTab.set(tabId, aweme.video);
+            await addMedia(tabId, { url: aweme.video, kind: 'mp4', pageTitle: awemeTitle || undefined });
+            const m2 = mediaByTab.get(tabId);
+            if (m2) {
+              const cur = m2.get(aweme.video);
+              if (cur && awemeTitle) cur.pageTitle = awemeTitle;
+              persist();
+            }
+            if (!prevEpoch || prevEpoch.src !== src) epochByTab.set(tabId, { src, since: Date.now() });
+            return sendResponse({ ok: true });
+          }
+          if (awemeId && /^\d{15,20}$/.test(awemeId)) {
+            const canonical = 'https://www.douyin.com/video/' + awemeId;
+            bindingByTab.set(tabId, { videoUrl: canonical, audioUrl: '' });
+            currentSrcByTab.set(tabId, canonical);
+            await addMedia(tabId, { url: canonical, kind: 'page', pageTitle: awemeTitle || undefined });
+            const m2 = mediaByTab.get(tabId);
+            if (m2) {
+              const cur = m2.get(canonical);
+              if (cur && awemeTitle) cur.pageTitle = awemeTitle;
+              persist();
+            }
+            if (!prevEpoch || prevEpoch.src !== src) epochByTab.set(tabId, { src, since: Date.now() });
+            return sendResponse({ ok: true });
+          }
 
           if (!/^https?:/i.test(src)) {
             // blob:（MSE 播放器，如抖音）→ 归属到真实网络流。

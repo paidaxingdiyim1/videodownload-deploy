@@ -53,6 +53,7 @@
     items: [],
     isLive: false,
     blobTimes: new Map(), // blob: 地址 -> 创建时刻（inject.js 主世界钩子上报）
+    awemeItems: new Map(), // 抖音作品 id -> {desc, video, audio}（feed 接口解析）
   };
 
   /* ------------------------------ 通信 ------------------------------ */
@@ -125,6 +126,9 @@
       }
     }
     if (best && best.v.currentSrc) {
+      // 抖音特化：当前作品 id + feed 接口里的播放地址（按 ID 精确匹配，不靠猜）
+      const awemeId = activeAwemeId(best.v);
+      const aweme = awemeId ? (state.awemeItems.get(awemeId) || null) : null;
       send({
         type: 'page:current',
         src: best.v.currentSrc,
@@ -132,8 +136,10 @@
         blobT: state.blobTimes.get(best.v.currentSrc) || 0,
         // 正在播放视频的精确时长——后台拿它当指纹让服务器 ffprobe 配对（最可靠）
         duration: Number.isFinite(best.v.duration) ? best.v.duration : 0,
+        awemeId,
+        aweme,
         // 用「正在播放的这个视频」所在卡片里的描述作为标题（而非全局第一个）
-        title: siteTitle(best.v) || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, '')) || '',
+        title: siteTitle(best.v) || (aweme && aweme.desc) || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, '')) || '',
         // 信息流站点：弹窗只显示当前视频的链接（防堆积，只识别正在播放的）
         solo: isDouyin(),
       });
@@ -330,10 +336,11 @@
     const directFile = cands.find((u) => /\.(mp4|webm|flv|m4v|mov|mkv)(\?|#|$)/i.test(u));
     if (directFile) return { url: directFile, kind: 'mp4' };
 
-    // 4) 嗅探列表里优先级最高的（播放列表优于直链，新的优于旧的）
+    // 4) 嗅探列表里优先级最高的（作品页地址最优——抖音按 ID 精确匹配的入口）
     const score = (it) => {
       let s = 0;
-      if (it.kind === 'hls') s += 100;
+      if (it.kind === 'page') s += 200;
+      else if (it.kind === 'hls') s += 100;
       else if (it.kind === 'dash') s += 90;
       else if (it.kind === 'mp4') s += 60;
       else if (it.kind === 'webm') s += 55;
@@ -341,7 +348,7 @@
       s += Math.min(20, (it.lastSeen - it.firstSeen) / 1000);
       return s;
     };
-    const usable = items.filter((it) => ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'audio'].includes(it.kind));
+    const usable = items.filter((it) => ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'audio', 'page'].includes(it.kind));
     if (usable.length) return [...usable].sort((a, b) => score(b) - score(a))[0];
 
     // 5) 兜底：候选里任意 http 地址
@@ -641,8 +648,32 @@
       }
     } else if (d.type === 'media') {
       send({ type: 'page:media', url: d.url, t: d.t });
+    } else if (d.type === 'feeditems' && Array.isArray(d.items)) {
+      // 抖音 feed 接口解析结果：作品 id -> 播放地址（画面 + 音频）
+      for (const it of d.items) {
+        if (it && it.id) state.awemeItems.set(String(it.id), it);
+      }
+      while (state.awemeItems.size > 300) {
+        state.awemeItems.delete(state.awemeItems.keys().next().value);
+      }
     }
   });
+
+  /** 当前视频的作品 id：详情页取路径；信息流取卡片的 data-e2e-vid（分享链接里的 ID） */
+  function activeAwemeId(v) {
+    const m = location.pathname.match(/\/video\/(\d{15,20})/);
+    if (m) return m[1];
+    let el = null;
+    try { el = v && v.closest && v.closest('[data-e2e-vid]'); } catch (_) {}
+    if (!el) {
+      try {
+        el = document.querySelector('[data-e2e="feed-active-video"] [data-e2e-vid]') ||
+             document.querySelector('[data-e2e-vid]');
+      } catch (_) {}
+    }
+    const id = el ? String(el.getAttribute('data-e2e-vid') || '') : '';
+    return /^\d{15,20}$/.test(id) ? id : '';
+  }
 
   chrome.runtime.onMessage.addListener((msg) => {
     // 弹窗「刷新」：清空记录后页面立刻重新上报当前视频与标题

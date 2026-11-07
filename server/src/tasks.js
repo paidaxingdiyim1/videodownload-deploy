@@ -324,6 +324,8 @@ class TaskStore {
   pickEngine(task, tools, cfg) {
     if (task.mode === 'native') return 'native';
     if (task.mode === 'ytdlp') return 'ytdlp';
+    // 作品页地址（抖音分享链接的规范化 URL 等）：必须由 yt-dlp 解析
+    if (task.kind === 'page') return tools.ytdlp.ok ? 'ytdlp' : 'native';
     // auto：明显的直链/播放列表走原生（可解密、无需额外依赖）
     const looksNative = /\.(m3u8|mpd|mp4|webm|flv|m4v|mov|ts)(\?|#|$)/i.test(task.url);
     if (looksNative || task.kind === 'hls' || task.kind === 'dash') return 'native';

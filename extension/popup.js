@@ -215,7 +215,7 @@ async function refresh() {
     send({ type: 'tasks' }),
   ]);
   if (m.ok) {
-    mediaItems = (m.items || []).filter((i) => ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'audio'].includes(i.kind));
+    mediaItems = (m.items || []).filter((i) => ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'audio', 'page'].includes(i.kind));
     // 当前正在播放的视频排最前
     mediaItems.sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0));
   }
