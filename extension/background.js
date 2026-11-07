@@ -552,9 +552,9 @@ function cookieDomainFor(url, kind) {
   if (kind !== 'page') return url;
   try {
     const h = new URL(url).hostname.toLowerCase();
-    if (/bilibili\.com|b23\.tv$/.test(h)) return 'https://www.bilibili.com';
-    if (/douyin\.com|iesdouyin\.com$/.test(h)) return 'https://www.douyin.com';
-    if (/kuaishou\.com|chenzhongtech\.com|gifshow\.com$/.test(h)) return 'https://www.kuaishou.com';
+    if (/bilibili\.com|b23\.tv$/.test(h)) return 'https://www.bilibili.com/';
+    if (/douyin\.com|iesdouyin\.com$/.test(h)) return 'https://www.douyin.com/';
+    if (/kuaishou\.com|chenzhongtech\.com|gifshow\.com$/.test(h)) return 'https://www.kuaishou.com/';
   } catch (_) {}
   return url;
 }
@@ -564,15 +564,21 @@ async function cookieStatusFor(url, kind) {
   const target = cookieDomainFor(url, kind);
   const list = await collectCookies(target);
   const names = list.map((c) => c.name);
-  const has = (k) => names.some((n) => n.toLowerCase().includes(k));
+  const find = (k) => names.find((n) => n.toLowerCase() === k.toLowerCase());
   return {
     domain: target,
     count: names.length,
     names,
-    hasTtwid: has('ttwid'),
-    hasMsToken: has('mstoken'),
-    hasSession: has('sessionid') || has('passport'),
-    hasSwebid: has('s_v_web_id'),
+    keys: {
+      ttwid: !!find('ttwid'),
+      msToken: !!find('msToken'),
+      odin_tt: !!find('odin_tt'),
+      __ac_nonce: !!find('__ac_nonce'),
+      __ac_signature: !!find('__ac_signature'),
+      sessionid: !!find('sessionid'),
+      passport_csrf_token: !!find('passport_csrf_token'),
+      s_v_web_id: !!find('s_v_web_id'),
+    },
   };
 }
 

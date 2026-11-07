@@ -56,22 +56,20 @@ async function showCookieStatus(url) {
   const dom = String(r.domain || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
   if (r.count === 0) {
     el.hidden = false; el.className = 'cookie-status warn';
-    el.textContent = `未获取到 ${dom} 的 Cookie：请先在浏览器打开并登录该网站，再解析`;
+    el.textContent = `未获取到 ${dom} 的 Cookie：请先在浏览器打开该网站（点开任意一个视频）再解析`;
     return;
   }
-  const parts = [];
-  if (r.hasTtwid) parts.push('ttwid ✓');
-  else if (r.hasSwebid) parts.push('s_v_web_id ✓');
-  if (r.hasMsToken) parts.push('msToken ✓');
-  if (r.hasSession) parts.push('已登录 ✓');
-  const hasKey = r.hasTtwid || r.hasSwebid || r.hasMsToken;
+  const k = r.keys || {};
+  const good = ['ttwid', '__ac_nonce', '__ac_signature', 'msToken', 'odin_tt'];
+  const miss = good.filter((x) => !k[x]);
+  const logged = k.sessionid || k.passport_csrf_token;
   el.hidden = false;
-  if (hasKey) {
+  if (!miss.length) {
     el.className = 'cookie-status ok';
-    el.textContent = `已获取 ${dom} Cookie（${r.count} 个${parts.length ? '：' + parts.join('、') : ''}）`;
+    el.textContent = `已获取 ${dom} Cookie（${r.count} 个，签名完整${logged ? '，已登录' : ''}）`;
   } else {
     el.className = 'cookie-status warn';
-    el.textContent = `已获取 ${r.count} 个 Cookie，但缺关键登录态（ttwid/msToken），抖音可能失败`;
+    el.textContent = `已获取 ${r.count} 个 Cookie，但缺关键项：${miss.join('、')}。请刷新 douyin.com 网页（点开一个视频）后再解析`;
   }
 }
 
