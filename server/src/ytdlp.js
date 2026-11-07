@@ -106,8 +106,11 @@ function writeCookieFile(cookies, url) {
   const lines = ['# Netscape HTTP Cookie File'];
   for (const c of list) {
     if (!c || !c.name) continue;
-    const domain = c.domain || host;
-    lines.push([domain, 'TRUE', '/', 'FALSE', '0', c.name, c.value].join('\t'));
+    // domain 必须带前导点（domain cookie），否则 http.cookiejar 遇到
+    // host-only 的不带点 domain 会抛 AssertionError，yt-dlp 报 invalid cookie
+    const raw = c.domain || host;
+    const dom = raw.startsWith('.') ? raw : '.' + raw;
+    lines.push([dom, 'TRUE', '/', 'FALSE', '0', c.name, c.value].join('\t'));
   }
   const file = path.join(os.tmpdir(), 'wvd-cookies-' + Date.now() + '.txt');
   fs.writeFileSync(file, lines.join('\n'), 'utf8');
