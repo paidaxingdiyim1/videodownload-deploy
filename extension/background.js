@@ -559,6 +559,23 @@ function cookieDomainFor(url, kind) {
   return url;
 }
 
+/** 检查某平台 Cookie 采集情况（供链接解析前提示） */
+async function cookieStatusFor(url, kind) {
+  const target = cookieDomainFor(url, kind);
+  const list = await collectCookies(target);
+  const names = list.map((c) => c.name);
+  const has = (k) => names.some((n) => n.toLowerCase().includes(k));
+  return {
+    domain: target,
+    count: names.length,
+    names,
+    hasTtwid: has('ttwid'),
+    hasMsToken: has('mstoken'),
+    hasSession: has('sessionid') || has('passport'),
+    hasSwebid: has('s_v_web_id'),
+  };
+}
+
 async function startDownload(msg, sender) {
   const cfg = await getConfig();
   const tabId = sender?.tab?.id ?? msg.tabId ?? -1;
@@ -968,6 +985,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             persist();
           }
           return sendResponse({ ok: true });
+        }
+        case 'cookie:check': {
+          const info = await cookieStatusFor(msg.url, msg.kind);
+          return sendResponse({ ok: true, ...info });
         }
         case 'config:get': {
           return sendResponse({ ok: true, config: await getConfig() });

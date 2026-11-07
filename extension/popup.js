@@ -49,6 +49,32 @@ function extractShareInfo(text) {
   return { url, title };
 }
 
+async function showCookieStatus(url) {
+  const el = $('#cookie-status');
+  const r = await send({ type: 'cookie:check', url, kind: 'page' });
+  if (!r || !r.ok) { el.hidden = true; return; }
+  const dom = String(r.domain || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (r.count === 0) {
+    el.hidden = false; el.className = 'cookie-status warn';
+    el.textContent = `未获取到 ${dom} 的 Cookie：请先在浏览器打开并登录该网站，再解析`;
+    return;
+  }
+  const parts = [];
+  if (r.hasTtwid) parts.push('ttwid ✓');
+  else if (r.hasSwebid) parts.push('s_v_web_id ✓');
+  if (r.hasMsToken) parts.push('msToken ✓');
+  if (r.hasSession) parts.push('已登录 ✓');
+  const hasKey = r.hasTtwid || r.hasSwebid || r.hasMsToken;
+  el.hidden = false;
+  if (hasKey) {
+    el.className = 'cookie-status ok';
+    el.textContent = `已获取 ${dom} Cookie（${r.count} 个${parts.length ? '：' + parts.join('、') : ''}）`;
+  } else {
+    el.className = 'cookie-status warn';
+    el.textContent = `已获取 ${r.count} 个 Cookie，但缺关键登录态（ttwid/msToken），抖音可能失败`;
+  }
+}
+
 async function doParse() {
   const input = $('#parse-input');
   const raw = input.value || '';
@@ -60,6 +86,7 @@ async function doParse() {
     st.querySelector('.stxt').textContent = '未识别到抖音/快手/B站链接，请检查分享文案';
     return;
   }
+  showCookieStatus(url);
   const btn = $('#parse-btn');
   btn.disabled = true; btn.textContent = '解析中…';
   const res = await send({

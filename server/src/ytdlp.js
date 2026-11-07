@@ -172,6 +172,9 @@ async function download(task, ctx) {
 
   if (task.format) args.push('-f', task.format);
   else args.push('-f', 'bv*+ba/b');
+  // 短视频/链接解析：模拟 Chrome TLS 指纹，绕过抖音/B站的指纹检测（需 curl_cffi，
+  // 服务器内置的 yt-dlp 自带；本地无 curl_cffi 时 yt-dlp 会忽略或报错，可容忍）
+  if (task.kind === 'page') args.push('--impersonate', 'chrome');
   // 让 yt-dlp 用我们随项目携带的 ffmpeg（server/bin），不依赖系统 PATH
   if (tools.ffmpeg.ok) {
     const ffCmd = tools.ffmpeg.cmd[0];
