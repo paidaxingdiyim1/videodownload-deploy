@@ -7,6 +7,47 @@ let mediaItems = [];
 let tasks = [];
 let saveTarget = 'server'; // 当前保存位置（popup 里快速切换）
 let cfg = {}; // 扩展配置（含服务器/本机地址与 Token）
+let shortSite = false; // 当前页是否抖音/快手/B站（走链接解析模式）
+
+/* 抖音/快手/B站 分享链接识别 */
+const SHORT_SITE_RE = /(douyin\.com|iesdouyin\.com|kuaishou\.com|v\.kuaishou\.com|gifshow\.com|chenzhongtech\.com|bilibili\.com|b23\.tv)/i;
+
+function isShortSiteUrl(u) {
+  try { return SHORT_SITE_RE.test(new URL(u).hostname); } catch (_) { return false; }
+}
+
+async function doParse() {
+  const input = $('#parse-input');
+  const url = (input.value || '').trim();
+  const st = $('#status');
+  if (!url) { input.focus(); return; }
+  if (!/^https?:\/\//i.test(url) || !isShortSiteUrl(url)) {
+    st.className = 'status bad';
+    st.querySelector('.stxt').textContent = '请粘贴有效的抖音/快手/B站链接';
+    return;
+  }
+  const btn = $('#parse-btn');
+  btn.disabled = true; btn.textContent = '解析中…';
+  const res = await send({
+    type: 'download',
+    url,
+    kind: 'page',
+    title: '',
+    referer: currentTab?.url || '',
+    tabId: currentTab?.id,
+    target: saveTarget,
+  });
+  btn.disabled = false; btn.textContent = '解析';
+  if (res && res.ok) {
+    input.value = '';
+    st.className = 'status ok';
+    st.querySelector('.stxt').textContent = '已提交解析，见下方任务';
+    setTimeout(refresh, 600);
+  } else {
+    st.className = 'status bad';
+    st.querySelector('.stxt').textContent = '解析失败：' + ((res && res.error) || '未知错误');
+  }
+}
 
 function send(msg) {
   return new Promise((resolve) => {
@@ -102,7 +143,10 @@ function renderMedia() {
   const list = $('#media-list');
   $('#count').textContent = mediaItems.length;
   if (!mediaItems.length) {
-    list.innerHTML = `<div class="empty">这一页还没检测到媒体资源<br>先点开视频播放几秒，再回来看</div>`;
+    const emptyMsg = shortSite
+      ? '此站点已切换为「链接解析」模式<br>请在上方粘贴分享链接下载'
+      : '这一页还没检测到媒体资源<br>先点开视频播放几秒，再回来看';
+    list.innerHTML = `<div class="empty">${emptyMsg}</div>`;
     return;
   }
   const byUrl = new Map(tasks.map((t) => [t.url, t]));
@@ -226,6 +270,7 @@ async function refresh() {
 
 async function init() {
   [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  shortSite = !!currentTab && isShortSiteUrl(currentTab.url || '');
   const c = await send({ type: 'config:get' });
   if (c.ok) { cfg = c.config || {}; saveTarget = cfg.saveTarget === 'local' ? 'local' : 'server'; }
   renderTarget();
@@ -244,6 +289,8 @@ async function init() {
   });
   $('#folder').addEventListener('click', () => send({ type: 'openFolder', target: saveTarget }));
   $('#options').addEventListener('click', () => chrome.runtime.openOptionsPage());
+  $('#parse-btn').addEventListener('click', doParse);
+  $('#parse-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') doParse(); });
 
   // 周期刷新：任务进度 + 媒体列表（时长指纹配对会异步更新「当前」指向）
   setInterval(refresh, 1200);

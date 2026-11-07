@@ -28,6 +28,14 @@ const IGNORE_RE = /\.(ts|m4s|aac\.seg|jpg|jpeg|png|gif|webp|svg|css|js|json|html
 /** 无扩展名音频流（抖音 media-audio-mp4a 之类）按 URL 特征识别 */
 const AUDIO_HINT_RE = /media-audio|audio-mp4a|\/audio[\/._-]|_audio\//i;
 
+/** 短视频/中视频平台：主动嗅探价值低，改为「粘贴分享链接解析」，不做资源嗅探 */
+function isNoSniffHost(u) {
+  try {
+    const h = new URL(u).hostname.toLowerCase();
+    return /(douyin\.com|iesdouyin\.com|kuaishou\.com|chenzhongtech\.com|gifshow\.com|bilibili\.com)$/.test(h);
+  } catch (_) { return false; }
+}
+
 /* 公开仓库（自更新来源），前端版本号与最新包都从这里取 */
 const REPO_RAW = 'https://raw.githubusercontent.com/paidaxingdiyim1/videodownload-deploy/main';
 const REPO_ZIP = 'https://github.com/paidaxingdiyim1/videodownload-deploy/archive/refs/heads/main.zip';
@@ -56,6 +64,8 @@ const consumedByTab = new Map();
 const hookTimeByTab = new Map();
 /** url -> duration 秒（服务器 ffprobe 实测，时长指纹配对用） */
 const probeCache = new Map();
+/** tabId -> true（短视频平台，不做主动嗅探，走链接解析） */
+const nosniffByTab = new Map();
 /** taskId -> {tabId, frameId} */
 const activeTasks = new Map();
 
@@ -440,6 +450,8 @@ chrome.webRequest.onBeforeRequest.addListener(
   (d) => {
     if (d.tabId == null || d.tabId < 0) return;
     if (liveByTab.get(d.tabId)) return; // 直播间：不嗅探
+    if (nosniffByTab.get(d.tabId)) return; // 短视频平台：走链接解析
+    if (isNoSniffHost(d.initiator)) return; // 短视频页面发起的请求也不嗅探（兜底）
     if (!isCandidate(d.url, '')) return;
     urlCache.set(d.requestId, { url: d.url, tabId: d.tabId, timeStamp: d.timeStamp });
     if (urlCache.size > 400) urlCache.delete(urlCache.keys().next().value);
@@ -459,6 +471,8 @@ chrome.webRequest.onHeadersReceived.addListener(
   (d) => {
     if (d.tabId == null || d.tabId < 0) return;
     if (liveByTab.get(d.tabId)) return; // 直播间：不嗅探
+    if (nosniffByTab.get(d.tabId)) return; // 短视频平台：走链接解析
+    if (isNoSniffHost(d.initiator)) return; // 短视频页面发起的请求也不嗅探（兜底）
     const headers = d.responseHeaders || [];
     const get = (name) => {
       const h = headers.find((x) => x.name.toLowerCase() === name);
@@ -497,6 +511,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   bindingByTab.delete(tabId);
   consumedByTab.delete(tabId);
   hookTimeByTab.delete(tabId);
+  nosniffByTab.delete(tabId);
   persist();
 });
 
@@ -510,6 +525,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     bindingByTab.delete(tabId);
     consumedByTab.delete(tabId);
     hookTimeByTab.delete(tabId);
+    nosniffByTab.delete(tabId);
     persist();
     updateBadge(tabId);
   }
@@ -538,10 +554,14 @@ async function startDownload(msg, sender) {
   const cookies = await collectCookies(msg.url);
   const target = resolveTarget(msg.target, cfg);
 
+  const kind = msg.kind || 'auto';
+  // 链接解析（kind=page）标题留空，交给 yt-dlp 解析真实标题；其它用页面标题兜底
+  const title = kind === 'page' ? (msg.title || '') : (msg.title || tabTitles.get(tabId) || '');
+
   const payload = {
     url: msg.url,
-    title: msg.title || tabTitles.get(tabId) || '',
-    kind: msg.kind || 'auto',
+    title,
+    kind,
     mode: msg.mode || cfg.mode || 'auto',
     quality: msg.quality || '',
     format: msg.format || '',
@@ -631,6 +651,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           times.set(url, t);
           if (times.size > 200) times.delete(times.keys().next().value);
           await addMedia(tabId, { url, kind: kindOf(url, ''), mime: '', size: 0, frameId: 0, pageUrl: '' });
+          return sendResponse({ ok: true });
+        }
+        case 'page:nosniff': {
+          // content 广播：本页是抖音/快手/B站，不做主动嗅探，走链接解析
+          const tabId = sender?.tab?.id;
+          if (tabId == null || tabId < 0) return sendResponse({ ok: true });
+          nosniffByTab.set(tabId, true);
+          mediaByTab.delete(tabId);
+          persist();
+          updateBadge(tabId);
           return sendResponse({ ok: true });
         }
         case 'page:live': {

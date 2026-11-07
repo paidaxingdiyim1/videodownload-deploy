@@ -403,6 +403,11 @@
     return /douyin\.com$/i.test(location.hostname);
   }
 
+  /** 短视频/中视频平台：不做主动资源嗅探，改为「粘贴分享链接解析」模式 */
+  function isShortVideoSite() {
+    return /(douyin\.com|iesdouyin\.com|kuaishou\.com|chenzhongtech\.com|gifshow\.com|bilibili\.com)$/i.test(location.hostname);
+  }
+
   /** 是否直播间：URL 特征 + DOM 特征双保险 */
   function isLiveRoom() {
     if (/^live\./i.test(location.hostname)) return true;
@@ -709,6 +714,13 @@
   /* ------------------------------ 启动 ------------------------------ */
 
   async function init() {
+    // 抖音/快手/B站：不做主动资源嗅探（无下载按钮、无列表堆积），
+    // 只保留「粘贴分享链接解析」入口，交后端 yt-dlp 特化解析
+    if (isShortVideoSite()) {
+      send({ type: 'page:nosniff' });
+      return;
+    }
+
     const cfgRes = await send({ type: 'config:get' });
     if (cfgRes && cfgRes.ok) state.cfg = cfgRes.config;
 
