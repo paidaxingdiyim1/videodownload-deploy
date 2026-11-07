@@ -16,14 +16,48 @@ function isShortSiteUrl(u) {
   try { return SHORT_SITE_RE.test(new URL(u).hostname); } catch (_) { return false; }
 }
 
+/**
+ * 从整段分享文案里提取链接和标题。抖音/快手的分享文案长这样：
+ * 「5.12 10/19 :6pm NWz:/ R@K.jc 假想系列之如果第七班交换拜师 # 动漫 # 火影忍者
+ *   https://v.douyin.com/_EX-GXZRdxc/ 复制此链接，打开Dou音搜索，直接观看视频！」
+ *  - 链接：正则抓 http(s) 地址
+ *  - 标题：链接之前的文字，去掉开头无中文的分享口令 token 和话题标签
+ */
+function extractShareInfo(text) {
+  text = String(text || '').trim();
+  let url = '';
+  const m = text.match(/https?:\/\/[^\s，。；、！？）】」』"']+/i);
+  if (m) url = m[0];
+  if (!url) {
+    const m2 = text.match(/((?:www\.)?(?:douyin\.com|kuaishou\.com|bilibili\.com|b23\.tv)\/[^\s，。；、！？）】」』"']*)/i);
+    if (m2) url = 'https://' + m2[1];
+  }
+  let title = '';
+  const idx = url ? text.indexOf(url) : -1;
+  const before = idx >= 0 ? text.slice(0, idx) : text;
+  const cleaned = before
+    .replace(/#\s*[^\s#]+/g, ' ')
+    .replace(/复制此链接[\s\S]*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const tokens = cleaned.split(' ');
+  const cjk = /[\u4e00-\u9fff]/;
+  let start = 0;
+  while (start < tokens.length && !cjk.test(tokens[start])) start++;
+  title = tokens.slice(start).join(' ').trim();
+  if (title.length > 80) title = title.slice(0, 80).trim();
+  return { url, title };
+}
+
 async function doParse() {
   const input = $('#parse-input');
-  const url = (input.value || '').trim();
+  const raw = input.value || '';
   const st = $('#status');
-  if (!url) { input.focus(); return; }
-  if (!/^https?:\/\//i.test(url) || !isShortSiteUrl(url)) {
+  if (!raw.trim()) { input.focus(); return; }
+  const { url, title } = extractShareInfo(raw);
+  if (!url || !/^https?:\/\//i.test(url) || !isShortSiteUrl(url)) {
     st.className = 'status bad';
-    st.querySelector('.stxt').textContent = '请粘贴有效的抖音/快手/B站链接';
+    st.querySelector('.stxt').textContent = '未识别到抖音/快手/B站链接，请检查分享文案';
     return;
   }
   const btn = $('#parse-btn');
@@ -32,7 +66,7 @@ async function doParse() {
     type: 'download',
     url,
     kind: 'page',
-    title: '',
+    title,
     referer: currentTab?.url || '',
     tabId: currentTab?.id,
     target: saveTarget,
