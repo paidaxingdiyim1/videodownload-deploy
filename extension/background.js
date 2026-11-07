@@ -883,6 +883,57 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const task = await startDownload(msg, sender);
           return sendResponse({ ok: true, task });
         }
+        case 'parse:share': {
+          // 抖音本地解析：抖音 __ac_signature/X-Bogus 与本地浏览器 IP 强绑定，
+          // 远程服务器无法用用户 Cookie 解析，只能由浏览器本地会话解析出 CDN
+          // 直链，再把直链交给服务器下载（CDN 直链无需签名）。
+          const url = String(msg.url || '');
+          const target = resolveTarget(msg.target, cfg);
+          // 1) 短链重定向拿到作品 ID（重定向无需签名）
+          let awemeId = '';
+          let finalUrl = url;
+          try {
+            const res = await fetch(url, { method: 'GET', redirect: 'follow' });
+            finalUrl = res.url || url;
+          } catch (_) {}
+          const m = String(finalUrl).match(/\/video\/(\d{15,20})/);
+          if (m) awemeId = m[1];
+          if (!awemeId) return sendResponse({ ok: false, error: '无法从链接识别视频 ID' });
+          // 2) 问当前抖音标签页要播放地址（inject.js 拦截 feed/detail API 已缓存）
+          let aweme = null;
+          try {
+            const tabs = await chrome.tabs.query({});
+            const dt = tabs.find((t) => t.id != null && t.url && /douyin\.com/.test(t.url));
+            if (dt) {
+              const r = await chrome.tabs.sendMessage(dt.id, { type: 'aweme:get', id: awemeId });
+              if (r && r.ok && r.aweme) aweme = r.aweme;
+            }
+          } catch (_) {}
+          if (!aweme || !/^https?:/i.test(aweme.video || '')) {
+            return sendResponse({ ok: false, error: '本地未缓存该视频播放地址：请先在抖音网页播放该视频，再复制链接解析' });
+          }
+          // 3) 用 CDN 直链下载（画面 + 音轨合并交给服务器 ffmpeg）
+          const cookies = await collectCookies(aweme.video);
+          const payload = {
+            url: aweme.video,
+            title: (msg.title && String(msg.title).trim()) || aweme.desc || '',
+            kind: 'mp4',
+            mode: cfg.mode || 'auto',
+            referer: finalUrl,
+            userAgent: navigator.userAgent,
+            cookies,
+            audioUrl: aweme.audio || '',
+          };
+          try {
+            const data = await api('/api/download', { method: 'POST', body: payload, timeout: 15000, target });
+            if (!data.ok || !data.task) throw new Error(data.error || '创建任务失败');
+            activeTasks.set(data.task.id, { tabId: sender?.tab?.id ?? -1, frameId: 0, target });
+            ensurePolling();
+            return sendResponse({ ok: true, task: data.task });
+          } catch (e) {
+            return sendResponse({ ok: false, error: String((e && e.message) || e) });
+          }
+        }
         case 'tasks': {
           // 合并服务器 + 本机两个端点的任务列表，并给每条任务打上所属端点
           const results = await Promise.allSettled([

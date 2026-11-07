@@ -88,12 +88,9 @@ async function doParse() {
   const btn = $('#parse-btn');
   btn.disabled = true; btn.textContent = '解析中…';
   const res = await send({
-    type: 'download',
+    type: 'parse:share',
     url,
-    kind: 'page',
     title,
-    referer: currentTab?.url || '',
-    tabId: currentTab?.id,
     target: saveTarget,
   });
   btn.disabled = false; btn.textContent = '解析';

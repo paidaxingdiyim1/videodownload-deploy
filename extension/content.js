@@ -680,14 +680,20 @@
     return /^\d{15,20}$/.test(id) ? id : '';
   }
 
-  chrome.runtime.onMessage.addListener((msg) => {
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    // 抖音本地解析：按作品 ID 返回缓存的播放地址（inject.js 拦截 feed API 缓存）
+    if (msg && msg.type === 'aweme:get') {
+      const it = state.awemeItems.get(String(msg.id || ''));
+      sendResponse({ ok: true, aweme: it || null });
+      return false;
+    }
     // 弹窗「刷新」：清空记录后页面立刻重新上报当前视频与标题
     if (msg && msg.type === 'media:resync') {
       broadcastTitle(true);
       broadcastCurrent(true);
-      return;
+      return false;
     }
-    if (!msg || msg.type !== 'task:update') return;
+    if (!msg || msg.type !== 'task:update') return false;
     const t = msg.task;
     for (const rec of state.tracked.values()) {
       if (rec.taskId !== t.id) continue;
@@ -709,6 +715,7 @@
         }, 5200);
       }
     }
+    return false;
   });
 
   /* ------------------------------ 启动 ------------------------------ */

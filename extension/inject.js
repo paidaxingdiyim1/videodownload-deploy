@@ -16,8 +16,8 @@
 
   const MEDIA_HINT_RE = /\.(mp4|m4a|mp3|m4v|mov|webm|flv|aac|m3u8|mpd)(\?|#|$)|\/video\/tos|\/audio\/tos|media-video|media-audio|douyinvod|bilivideo|googlevideo/i;
 
-  /* 抖音 feed / 作品列表 / 搜索接口：响应 JSON 里有每条作品的播放地址 */
-  const DOUYIN_API_RE = /\/aweme\/v1\/(web|multi)\/feed\/|\/aweme\/v1\/web\/aweme\/post\/|\/aweme\/v1\/web\/general\/search\/single\//i;
+  /* 抖音 feed / 作品列表 / 搜索 / 详情接口：响应 JSON 里有每条作品的播放地址 */
+  const DOUYIN_API_RE = /\/aweme\/v1\/(web|multi)\/feed\/|\/aweme\/v1\/web\/aweme\/post\/|\/aweme\/v1\/web\/general\/search\/single\/|\/aweme\/v1\/web\/aweme\/detail\//i;
 
   /** 从抖音接口 JSON 里提取作品：{id, desc, video, audio} */
   function extractAweme(json) {
