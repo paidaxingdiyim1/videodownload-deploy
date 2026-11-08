@@ -8,6 +8,7 @@ const hls = require('./hls');
 const dash = require('./dash');
 const direct = require('./direct');
 const ytdlp = require('./ytdlp');
+const cfdl = require('./cfdl');
 
 /* ------------------------------------------------------------------ */
 /*  网络请求封装：带 Referer / Cookie / UA / 重试                       */
@@ -271,6 +272,10 @@ class TaskStore {
 
       if (engine === 'ytdlp') {
         result = await ytdlp.download(task, ctx);
+      } else if ((task.kind === 'hls' || /\.m3u8(\?|$)/i.test(task.url)) && isCfSite(task.url, task.referer)) {
+        // Cloudflare 强防护站（surrit 等）：Node/yt-dlp 都会被 403，走 curl_cffi 浏览器指纹
+        this.log(task, '检测到 Cloudflare 防护，改用浏览器指纹下载…');
+        result = await cfdl.download(task, ctx);
       } else if (task.kind === 'hls' || /\.m3u8(\?|$)/i.test(task.url)) {
         result = await hls.download(task, ctx);
       } else if (task.kind === 'dash' || /\.mpd(\?|$)/i.test(task.url)) {
@@ -473,6 +478,14 @@ function parseEpisode(title) {
     if (ep > 0 && show) return { show: show.slice(0, 60), season: 1, episode: ep };
   }
   return null;
+}
+
+/** 判断是否为 Cloudflare 强防护的 m3u8（surrit 等），这类站 Node/yt-dlp 都会被 403 */
+function isCfSite(url, referer) {
+  const u = String(url || '');
+  // surrit.com（missav 的视频 CDN）等已知 Cloudflare 强防护域
+  if (/surrit\.com/i.test(u)) return true;
+  return false;
 }
 
 /** 把 yt-dlp 等底层英文错误翻译成用户能看懂的提示 */
