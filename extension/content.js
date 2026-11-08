@@ -768,7 +768,7 @@
     try {
       const hdrs = { 'Referer': referer };
       let res = await fetch(url, { headers: hdrs, credentials: 'include' });
-      if (!res.ok) throw new Error('浏览器获取播放列表失败：HTTP ' + res.status);
+      if (!res.ok) throw new Error('浏览器获取播放列表失败：HTTP ' + res.status + '（' + url.slice(0, 70) + '…）');
       let text = await res.text();
       let baseUrl = res.url || url;
       let parsed = parseM3U8Text(text, baseUrl);
@@ -776,13 +776,13 @@
       if (parsed.isMaster && parsed.variants.length) {
         parsed.variants.sort((a, b) => b.bandwidth - a.bandwidth);
         res = await fetch(parsed.variants[0].url, { headers: hdrs, credentials: 'include' });
-        if (!res.ok) throw new Error('浏览器获取播放列表失败：HTTP ' + res.status);
+        if (!res.ok) throw new Error('浏览器获取播放列表失败：HTTP ' + res.status + '（' + parsed.variants[0].url.slice(0, 70) + '…）');
         text = await res.text();
         baseUrl = res.url || parsed.variants[0].url;
         parsed = parseM3U8Text(text, baseUrl);
       }
       const segs = parsed.segments;
-      if (!segs.length) throw new Error('播放列表里没有分片');
+      if (!segs.length) throw new Error('播放列表里没有分片（可能不是标准 m3u8）');
 
       // 按分片类型判定容器：TS 分片存 .ts，fmp4（.m4s/.mp4）分片存 .mp4
       const ext = /\.(m4s|mp4)(\?|$)/i.test(segs[0]) ? 'mp4' : 'ts';
@@ -805,7 +805,11 @@
       if (!fin || !fin.ok) throw new Error((fin && fin.error) || '保存失败');
       return { ok: true, filePath: fin.filePath, fileName: fin.fileName };
     } catch (e) {
-      return { ok: false, error: String(e && e.message || e) };
+      let m = String(e && e.message || e);
+      if (/Failed to fetch|NetworkError|TypeError|Load failed/i.test(m)) {
+        m = '浏览器请求被拦截（可能 CORS/网络限制）：' + m;
+      }
+      return { ok: false, error: m };
     }
   }
 
@@ -962,9 +966,11 @@
       browserDownload(msg).then((r) => {
         const rr = activeRec() || rec;
         if (r.ok) {
+          send({ type: 'browser-notify', title: '已保存到服务器', message: r.fileName || '下载完成' });
           if (rr) { setBtnState(rr, 'done', '已保存', '已保存到服务器：' + (r.fileName || '下载完成')); }
           setTimeout(() => { const r2 = activeRec(); if (r2) setBtnState(r2, 'idle', '下载'); }, 5000);
         } else {
+          send({ type: 'browser-notify', title: '浏览器下载失败', message: r.error || '未知错误' });
           if (rr) { setBtnState(rr, 'error', '失败', r.error || '浏览器下载失败'); }
           setTimeout(() => { const r2 = activeRec(); if (r2) setBtnState(r2, 'idle', '下载'); }, 5200);
         }

@@ -775,13 +775,16 @@ async function pollOnce() {
         });
         // Cloudflare 强防护站（如 surrit）：服务器下载 403 → 回退浏览器本地下载
         if (t.status === 'error' && /403|forbidden|cloudflare|获取播放列表失败|防盗链/i.test(String(t.error || ''))) {
-          chrome.tabs.sendMessage(info.tabId, {
+          const bd = {
             type: 'browser-download',
             url: info.url,
             title: info.title || t.title || '',
             customName: info.customName || '',
             referer: info.referer || '',
-          }).catch(() => {});
+          };
+          chrome.tabs.sendMessage(info.tabId, bd, { frameId: info.frameId }).catch(() => {
+            chrome.tabs.sendMessage(info.tabId, bd).catch(() => {});
+          });
         }
         if (['done', 'error', 'canceled'].includes(t.status)) {
           activeTasks.delete(id);
@@ -1053,6 +1056,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }).catch(() => {});
           }
           return sendResponse(r);
+        }
+        case 'browser-notify': {
+          chrome.notifications.create({
+            type: 'basic',
+            iconUrl: 'icons/icon128.png',
+            title: msg.title || '下载提示',
+            message: String(msg.message || ''),
+          }).catch(() => {});
+          return sendResponse({ ok: true });
         }
         case 'parse:aweme': {
           // 悬浮「解析」按钮：按作品 ID / 流 URL 解析出官方播放地址（含音轨+文案）。
