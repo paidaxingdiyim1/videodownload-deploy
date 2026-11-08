@@ -26,6 +26,20 @@ function download(task, ctx) {
       resolve({ file: outPath, ext });
     });
 
+    // 实时解析 "PROGRESS x" 上报进度
+    let pbuf = '';
+    if (child.stdout) {
+      child.stdout.on('data', (d) => {
+        pbuf += d.toString();
+        let m;
+        while ((m = pbuf.match(/PROGRESS\s+(\d+)/))) {
+          const pct = parseInt(m[1], 10);
+          if (ctx && ctx.report) ctx.report({ progress: Math.min(100, pct) });
+          pbuf = pbuf.slice(m.index + m[0].length);
+        }
+      });
+    }
+
     // 任务取消时杀掉子进程
     if (ctx && ctx.signal) {
       const onAbort = () => { try { child.kill('SIGKILL'); } catch (_) {} };
