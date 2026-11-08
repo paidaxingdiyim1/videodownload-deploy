@@ -735,7 +735,7 @@
     // 只保留「粘贴分享链接解析」入口，交后端 yt-dlp 特化解析
     if (isShortVideoSite()) {
       send({ type: 'page:nosniff' });
-      // 不加按钮、不扫描；但仍广播页面标题（给嗅探/解析条目命名用）
+      // 页面标题广播（给嗅探条目命名）
       const tb = () => {
         const t = siteTitle() || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, ''));
         if (t) send({ type: 'page:title', title: t });
@@ -743,8 +743,28 @@
       setTimeout(tb, 2000);
       setTimeout(tb, 6000);
       document.addEventListener('playing', (e) => {
-        if (e.target && e.target.tagName === 'VIDEO') setTimeout(tb, 400);
+        if (e.target && e.target.tagName === 'VIDEO') {
+          setTimeout(tb, 400);
+          setTimeout(() => broadcastCurrent(true), 700);
+        }
       }, true);
+      // 恢复下载按钮：仍只给「正在播放」的视频显示（直播间不显示）。
+      // 点击后走后台 aweme 反查（v1.6.1）：自动下合并后的完整视频 + 作品文案标题
+      buildUI();
+      scan(document);
+      requestAnimationFrame(loop);
+      let moTimer2 = null;
+      const mo2 = new MutationObserver((records) => {
+        let need = false;
+        for (const r of records) {
+          if (r.addedNodes && r.addedNodes.length) { need = true; break; }
+        }
+        if (!need) return;
+        clearTimeout(moTimer2);
+        moTimer2 = setTimeout(() => scan(document), 350);
+      });
+      try { mo2.observe(document.documentElement, { childList: true, subtree: true }); } catch (_) {}
+      window.addEventListener('resize', () => updatePositions(), { passive: true });
       return;
     }
 
