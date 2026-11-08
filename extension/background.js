@@ -809,17 +809,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return sendResponse({ ok: true });
           }
           if (awemeId && /^\d{15,20}$/.test(awemeId)) {
-            const canonical = 'https://www.douyin.com/video/' + awemeId;
-            bindingByTab.set(tabId, { videoUrl: canonical, audioUrl: '' });
-            currentSrcByTab.set(tabId, canonical);
-            await addMedia(tabId, { url: canonical, kind: 'page', pageTitle: awemeTitle || undefined });
-            const m2 = mediaByTab.get(tabId);
-            if (m2) {
-              const cur = m2.get(canonical);
-              if (cur && awemeTitle) cur.pageTitle = awemeTitle;
-              persist();
-            }
+            // 有作品 ID 但 feed 缓存还没播放地址：不往列表塞 kind=page 条目
+            // （那是把下载引向必败 yt-dlp 的元凶），改为后台开详情页异步补缓存
+            bindingByTab.set(tabId, { videoUrl: 'https://www.douyin.com/video/' + awemeId, audioUrl: '' });
             if (!prevEpoch || prevEpoch.src !== src) epochByTab.set(tabId, { src, since: Date.now() });
+            const reqSrc = src;
+            parsePageFallback(awemeId).then((fb) => {
+              if (!fb.ok) return;
+              if (epochByTab.get(tabId) && epochByTab.get(tabId).src !== reqSrc) return; // 已滑走
+              bindingByTab.set(tabId, { videoUrl: fb.aweme.video, audioUrl: fb.aweme.audio || '' });
+              currentSrcByTab.set(tabId, fb.aweme.video);
+              const rt = realTitleByTab.get(tabId);
+              const title = fb.aweme.desc || (rt && rt.title) || '';
+              addMedia(tabId, { url: fb.aweme.video, kind: 'mp4', pageTitle: title || undefined }).then(() => {
+                const m2 = mediaByTab.get(tabId);
+                if (m2) {
+                  const cur = m2.get(fb.aweme.video);
+                  if (cur && title) cur.pageTitle = title;
+                  persist();
+                }
+                updateBadge(tabId);
+                notifyTab(tabId, { type: 'media:changed' });
+              });
+            }).catch(() => {});
             return sendResponse({ ok: true });
           }
 
@@ -972,7 +984,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
           } catch (_) {}
           if (!aweme || !/^https?:/i.test(aweme.video || '')) {
-            return sendResponse({ ok: false, error: '本地未缓存该视频播放地址：请先在抖音网页播放该视频，再复制链接解析' });
+            // 本地缓存没有 → 自动后台打开详情页让浏览器解析补缓存
+            const fb = await parsePageFallback(awemeId);
+            if (!fb.ok) return sendResponse({ ok: false, error: fb.error });
+            aweme = fb.aweme;
           }
           // 3) 用 CDN 直链下载（画面 + 音轨合并交给服务器 ffmpeg）
           const cookies = await collectCookies(aweme.video);
