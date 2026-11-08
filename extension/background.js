@@ -584,20 +584,21 @@ async function cookieStatusFor(url, kind) {
 
 /** 抖音解析兜底：本地缓存未命中时，后台打开作品详情页，让浏览器自己完成
  *  acrawler 签名并请求 detail API（inject.js 拦截），轮询缓存直到拿到播放地址。
- *  防护（v1.6.6）：同一作品同时只解析一次（详情页自己也会广播 page:current，
- *  若不去重会「开页→广播→再开页」无限套娃）；失败后 2 分钟冷却；全局最多 2 个并发 */
-const awemePending = new Set();
+ *  防护（v1.6.9）：同一作品的并发调用共享同一个 Promise（等待而非秒拒——
+ *  page:current 播放时已触发解析，用户再点「解析」要等到结果而不是报错）；
+ *  失败后 2 分钟冷却；全局最多 2 个并发 */
+const awemePending = new Map(); // awemeId -> Promise<{ok,aweme,error}>
 const awemeFailedAt = new Map();
 const AWEME_COOLDOWN = 120000;
 
 async function parsePageFallback(awemeId) {
-  if (awemePending.has(awemeId)) return { ok: false, error: '该作品正在解析中' };
+  const existing = awemePending.get(awemeId);
+  if (existing) return existing; // 解析中：共享同一个 Promise
   const failedAt = awemeFailedAt.get(awemeId) || 0;
-  if (Date.now() - failedAt < AWEME_COOLDOWN) return { ok: false, error: '该作品刚解析失败，稍后再试' };
-  if (awemePending.size >= 2) return { ok: false, error: '已有解析任务进行中' };
-  awemePending.add(awemeId);
-  let tab;
-  try {
+  if (Date.now() - failedAt < AWEME_COOLDOWN) return { ok: false, error: '该作品刚解析失败，请稍后再试' };
+  if (awemePending.size >= 2) return { ok: false, error: '已有多个解析任务进行中，请稍候' };
+  const p = (async () => {
+    let tab;
     try {
       tab = await chrome.tabs.create({ url: 'https://www.douyin.com/video/' + awemeId, active: false });
     } catch (e) {
@@ -609,9 +610,9 @@ async function parsePageFallback(awemeId) {
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2000));
         try {
-          const r = await chrome.tabs.sendMessage(tabId, { type: 'aweme:get', id: awemeId });
-          if (r && r.ok && r.aweme && /^https?:/i.test(r.aweme.video || '')) {
-            return { ok: true, aweme: r.aweme };
+          const r2 = await chrome.tabs.sendMessage(tabId, { type: 'aweme:get', id: awemeId });
+          if (r2 && r2.ok && r2.aweme && /^https?:/i.test(r2.aweme.video || '')) {
+            return { ok: true, aweme: r2.aweme };
           }
         } catch (_) {}
       }
@@ -620,14 +621,18 @@ async function parsePageFallback(awemeId) {
     } finally {
       chrome.tabs.remove(tabId).catch(() => {});
     }
+  })();
+  awemePending.set(awemeId, p);
+  try {
+    return await p;
   } finally {
     awemePending.delete(awemeId);
   }
 }
 
-/** 解析抖音作品：返回 { video, audio, desc } 或 null。
+/** 解析抖音作品：返回 { ok, aweme, error }（aweme = { video, audio, desc, id }）。
  *  1) 优先按作品 ID（aweme:get）或流 URL（aweme:find）查本地缓存（inject.js 拦截的 feed/detail）
- *  2) 未命中则后台静默开详情页补缓存（parsePageFallback，含防重/冷却） */
+ *  2) 未命中则后台静默开详情页补缓存（parsePageFallback，并发共享等待） */
 async function resolveAweme(msg, pageUrl) {
   const awid = String(msg.awemeId || '').match(/^\d{15,20}$/) ? msg.awemeId : '';
   try {
@@ -639,16 +644,15 @@ async function resolveAweme(msg, pageUrl) {
       if (awid) r = await chrome.tabs.sendMessage(dt.id, { type: 'aweme:get', id: awid });
       else if (vid) r = await chrome.tabs.sendMessage(dt.id, { type: 'aweme:get', id: vid[1] });
       else r = await chrome.tabs.sendMessage(dt.id, { type: 'aweme:find', url: msg.url });
-      if (r && r.ok && r.aweme && /^https?:/i.test(r.aweme.video || '')) return r.aweme;
+      if (r && r.ok && r.aweme && /^https?:/i.test(r.aweme.video || '')) return { ok: true, aweme: r.aweme };
     }
   } catch (_) {}
   const vid = String(msg.url || '').match(/\/video\/(\d{15,20})/)?.[1] || awid || '';
   const isDouyin = awid || /douyin\.com/.test(pageUrl || '') || /douyin\.com/.test(msg.referer || '');
   if (vid && /^\d{15,20}$/.test(vid) && isDouyin) {
-    const fb = await parsePageFallback(vid);
-    if (fb.ok) return fb.aweme;
+    return await parsePageFallback(vid);
   }
-  return null;
+  return { ok: false, error: '未能定位作品 ID（请确认在抖音视频页面操作）' };
 }
 
 async function startDownload(msg, sender) {
@@ -660,7 +664,8 @@ async function startDownload(msg, sender) {
   // 抖音：反查所属作品（官方音轨 + 作品文案标题），命中则改下「合并后的完整视频」。
   let awemeHit = null;
   if (['video', 'mp4', 'audio', 'page'].includes(kind)) {
-    awemeHit = await resolveAweme(msg, pageUrl);
+    const r = await resolveAweme(msg, pageUrl);
+    if (r.ok) awemeHit = r.aweme;
   }
   if (awemeHit) {
     msg = { ...msg, url: awemeHit.video, kind: 'mp4' };
@@ -986,9 +991,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return sendResponse({ ok: true, task });
         }
         case 'parse:aweme': {
-          // 悬浮「解析」按钮：按作品 ID / 流 URL 解析出官方播放地址（含音轨+文案）
-          const aweme = await resolveAweme(msg, sender?.tab?.url || '');
-          return sendResponse({ ok: true, aweme: aweme || null });
+          // 悬浮「解析」按钮：按作品 ID / 流 URL 解析出官方播放地址（含音轨+文案）。
+          // 若后台兜底已在解析同一作品，这里共享等待（不秒拒）。
+          // 成功后把官方地址入列弹窗（解析前列表是空的，nosniff 模式不嗅探）
+          const tabId = sender?.tab?.id;
+          const r = await resolveAweme(msg, sender?.tab?.url || '');
+          if (r.ok && r.aweme && tabId != null && tabId >= 0) {
+            const title = r.aweme.desc || '';
+            await addMedia(tabId, { url: r.aweme.video, kind: 'mp4', pageTitle: title || undefined });
+            const m2 = mediaByTab.get(tabId);
+            if (m2) {
+              const cur = m2.get(r.aweme.video);
+              if (cur && title) cur.pageTitle = title;
+              persist();
+            }
+            updateBadge(tabId);
+            notifyTab(tabId, { type: 'media:changed' });
+          }
+          return sendResponse({ ok: true, aweme: (r && r.aweme) || null, error: (r && r.error) || '' });
         }
         case 'parse:share': {
           // 抖音本地解析：抖音 __ac_signature/X-Bogus 与本地浏览器 IP 强绑定，
