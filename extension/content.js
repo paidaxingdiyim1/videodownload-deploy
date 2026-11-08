@@ -42,6 +42,16 @@
       padding: 10px 12px; cursor: pointer; font: inherit; color: inherit; text-align: left; }
     .tm-it:hover { background: #2b6cff; color: #fff; }
     .tm-it .tm-ic { font-size: 13px; }
+    .tm-in { box-sizing: border-box; width: 100%; border: 0; border-bottom: 1px solid #eef0f2;
+      padding: 10px 12px; font: 500 13px/1.3 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      color: #1a1d21; outline: none; background: #fff; }
+    .tm-in:focus { border-bottom-color: #2b6cff; }
+    .tm-row { display: flex; border-top: 1px solid #f0f1f3; }
+    .tm-btn { flex: 1; border: 0; background: none; padding: 10px 0; cursor: pointer;
+      font: 600 12.5px/1 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; color: #8a8f98; }
+    .tm-btn + .tm-btn { border-left: 1px solid #f0f1f3; }
+    .tm-btn.ok { color: #2b6cff; font-weight: 700; }
+    .tm-btn:hover { background: #f4f6f8; }
   `;
 
   const state = {
@@ -654,6 +664,58 @@
     });
   }
 
+  /** 下载前可改文件名：预填自动识别的标题，像 Windows「另存为」一样，回车确认、Esc 取消 */
+  function askFilename(defaultName, anchor) {
+    return new Promise((resolve) => {
+      buildUI();
+      const box = document.createElement('div');
+      box.className = 'tmenu';
+      box.style.minWidth = '300px';
+      box.innerHTML = `
+        <div class="tm-hd">保存文件名</div>
+        <input class="tm-in" type="text" spellcheck="false" autocomplete="off">
+        <div class="tm-row">
+          <button class="tm-btn" type="button">取消</button>
+          <button class="tm-btn ok" type="button">下载</button>
+        </div>`;
+      const inp = box.querySelector('.tm-in');
+      inp.value = defaultName || '';
+      let x = Math.max(8, window.innerWidth / 2 - 150);
+      let y = Math.max(8, window.innerHeight / 2 - 50);
+      if (anchor && typeof anchor.getBoundingClientRect === 'function') {
+        const r = anchor.getBoundingClientRect();
+        x = Math.min(Math.max(8, r.left), window.innerWidth - 310);
+        y = r.bottom + 6;
+        if (y + 110 > window.innerHeight) y = Math.max(8, r.top - 116);
+      }
+      box.style.left = x + 'px';
+      box.style.top = y + 'px';
+      state.layer.appendChild(box);
+      let done = false;
+      const close = (val) => {
+        if (done) return;
+        done = true;
+        box.remove();
+        document.removeEventListener('pointerdown', onDoc, true);
+        resolve(val);
+      };
+      setTimeout(() => { try { inp.focus(); inp.select(); } catch (_) {} }, 0);
+      inp.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); close(inp.value.trim()); }
+        else if (e.key === 'Escape') close(null);
+      });
+      const btns = box.querySelectorAll('.tm-btn');
+      btns[0].addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); close(null); });
+      btns[1].addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); close(inp.value.trim()); });
+      const onDoc = (e) => {
+        if (e.target === state.host) return;
+        if (!box.contains(e.target)) close(null);
+      };
+      setTimeout(() => document.addEventListener('pointerdown', onDoc, true), 0);
+    });
+  }
+
   /** 抖音悬浮「解析」：按作品 ID 解析官方播放地址（含音轨+文案），成功后按钮变「下载」 */
   async function parseFor(video, rec) {
     if (rec) setBtnState(rec, 'loading', '解析中…', '正在解析播放地址');
@@ -699,13 +761,22 @@
 
     // 已解析过（抖音两段式）或走普通嗅探
     const aweme = rec && rec.aweme ? rec.aweme : null;
-    const title = aweme ? (aweme.desc || pageTitle(video)) : ((explicit && explicit.title) || pageTitle(video));
+    const autoTitle = aweme ? (aweme.desc || pageTitle(video)) : ((explicit && explicit.title) || pageTitle(video));
+
+    // 下载前可改文件名（像 Windows「另存为」：预填自动识别的标题，回车确认，Esc 取消）
+    const customName = await askFilename(autoTitle, btn);
+    if (customName === null) {
+      if (rec) setBtnState(rec, 'idle', '下载');
+      return; // 用户取消
+    }
+    const title = customName || autoTitle;
 
     const result = await send({
       type: 'download',
       url: aweme ? aweme.video : pick.url,
       kind: aweme ? 'mp4' : (pick.kind || 'auto'),
       title,
+      customName: customName || '',
       // 抖音：带作品 ID，后台未命中时自动补缓存；普通站点 activeAwemeId 为空
       awemeId: aweme ? (aweme.id || '') : (activeAwemeId(video) || ''),
       referer: location.href,
