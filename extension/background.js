@@ -582,6 +582,33 @@ async function cookieStatusFor(url, kind) {
   };
 }
 
+/** 抖音解析兜底：本地缓存未命中时，后台打开作品详情页，让浏览器自己完成
+ *  acrawler 签名并请求 detail API（inject.js 拦截），轮询缓存直到拿到播放地址 */
+async function parsePageFallback(awemeId) {
+  let tab;
+  try {
+    tab = await chrome.tabs.create({ url: 'https://www.douyin.com/video/' + awemeId, active: false });
+  } catch (e) {
+    return { ok: false, error: '无法打开抖音页面' };
+  }
+  const tabId = tab.id;
+  const deadline = Date.now() + 30000;
+  try {
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const r = await chrome.tabs.sendMessage(tabId, { type: 'aweme:get', id: awemeId });
+        if (r && r.ok && r.aweme && /^https?:/i.test(r.aweme.video || '')) {
+          return { ok: true, aweme: r.aweme };
+        }
+      } catch (_) {}
+    }
+    return { ok: false, error: '解析超时：抖音页面未能提供播放地址（请确认浏览器能正常打开抖音）' };
+  } finally {
+    chrome.tabs.remove(tabId).catch(() => {});
+  }
+}
+
 async function startDownload(msg, sender) {
   const cfg = await getConfig();
   const tabId = sender?.tab?.id ?? msg.tabId ?? -1;
@@ -603,6 +630,14 @@ async function startDownload(msg, sender) {
         if (r && r.ok && r.aweme && /^https?:/i.test(r.aweme.video || '')) awemeHit = r.aweme;
       }
     } catch (_) {}
+    // 作品页反查未命中：自动后台打开详情页让浏览器解析（不再走必败的 yt-dlp）
+    if (!awemeHit && kind === 'page') {
+      const vid = String(msg.url).match(/\/video\/(\d{15,20})/);
+      if (vid) {
+        const fb = await parsePageFallback(vid[1]);
+        if (fb.ok) awemeHit = fb.aweme;
+      }
+    }
   }
   if (awemeHit) {
     msg = { ...msg, url: awemeHit.video, kind: 'mp4' };

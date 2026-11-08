@@ -165,6 +165,7 @@ class TaskStore {
     };
     this.tasks.set(task.id, task);
     this.queue.push(task);
+    taskFileLog(task, 'CREATE');
     this.emit('created', this.snapshot(task));
     this.pump(cfg);
     return this.snapshot(task);
@@ -307,6 +308,7 @@ class TaskStore {
       task.fileName = path.basename(finalPath);
       try { task.total = fs.statSync(finalPath).size; task.downloaded = task.total; } catch (_) {}
       this.log(task, `完成：${finalPath}`);
+      taskFileLog(task, 'DONE', `file=${finalPath}`);
       this.emit('done', this.snapshot(task));
     } catch (e) {
       const canceled = controller.signal.aborted;
@@ -314,6 +316,7 @@ class TaskStore {
       task.stage = canceled ? 'canceled' : 'error';
       task.error = canceled ? '已取消' : friendlyError(e.message);
       this.log(task, (canceled ? '已取消：' : '失败：') + task.error);
+      taskFileLog(task, canceled ? 'CANCELED' : 'ERROR', `error=${task.error}`);
       this.emit('done', this.snapshot(task));
       try { cleanupTmp(tmpFile, null); } catch (_) {}
     } finally {
@@ -408,6 +411,17 @@ class TaskStore {
     }
     this.emit('cleared', {});
   }
+}
+
+/** 持久化任务日志：任务创建/完成/失败都追加到 logs/tasks.log（重启不丢，便于排查） */
+function taskFileLog(task, event, extra) {
+  try {
+    const dir = path.join(config.ROOT, 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    const cookies = Array.isArray(task.cookies) ? task.cookies.length : (task.cookies ? 1 : 0);
+    const line = `[${new Date().toLocaleString('zh-CN', { hour12: false })}] ${event} id=${task.id} "${task.title}" kind=${task.kind} engine=${task.engine || '-'} audioUrl=${task.audioUrl ? 'yes' : 'no'} cookies=${cookies} customName=${task.customName || '-'} url=${task.url}${extra ? ' | ' + extra : ''}\n`;
+    fs.appendFileSync(path.join(dir, 'tasks.log'), line, 'utf8');
+  } catch (_) {}
 }
 
 /** 中文数字转阿拉伯（一~九十九、百） */
