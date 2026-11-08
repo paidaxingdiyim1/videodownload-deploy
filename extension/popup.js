@@ -92,6 +92,7 @@ async function doParse() {
     url,
     title,
     target: saveTarget,
+    customName: ($('#name-input').value || '').trim(),
   });
   btn.disabled = false; btn.textContent = '解析';
   if (res && res.ok) {
@@ -251,6 +252,7 @@ function renderMedia() {
         referer: currentTab?.url || '',
         tabId: currentTab?.id,
         target: saveTarget,
+        customName: ($('#name-input').value || '').trim(),
       });
       if (!res.ok) {
         b.textContent = '失败';

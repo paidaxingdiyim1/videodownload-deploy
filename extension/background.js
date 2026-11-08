@@ -603,6 +603,7 @@ async function startDownload(msg, sender) {
     referer: msg.referer || pageUrl,
     userAgent: navigator.userAgent,
     cookies,
+    customName: msg.customName || '',
   };
 
   // 音画分离站点（抖音等）：统一在后台配音轨。优先用 page:current 归属时
@@ -923,6 +924,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             userAgent: navigator.userAgent,
             cookies,
             audioUrl: aweme.audio || '',
+            customName: msg.customName || '',
           };
           try {
             const data = await api('/api/download', { method: 'POST', body: payload, timeout: 15000, target });

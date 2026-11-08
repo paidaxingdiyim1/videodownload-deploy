@@ -149,6 +149,7 @@ class TaskStore {
       cookies: input.cookies || null,
       withSeparateAudio: !!input.withSeparateAudio,
       audioUrl: String(input.audioUrl || ''),
+      customName: String(input.customName || '').trim(),
       status: 'queued',
       stage: 'queued',
       progress: 0,
@@ -337,17 +338,23 @@ class TaskStore {
     const site = (() => { try { return new URL(task.referer || task.url).hostname.replace(/^www\./, ''); } catch (_) { return ''; } })();
     const d = new Date();
     const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-    let name = cfg.namingTemplate || '{title}';
-    name = name
-      .replace(/\{title\}/g, task.title)
-      .replace(/\{site\}/g, site)
-      .replace(/\{date\}/g, date)
-      .replace(/\{quality\}/g, task.quality || '')
-      .replace(/\{index\}/g, String(task.seq).padStart(3, '0'));
-    // 无信息量标题（站点没提供标题 / 纯站名）时，用 站名_日期_序号 兜底，避免一堆「视频.mp4」「视频 (1).mp4」
-    const GENERIC = /^(视频|video|media|index|playlist|manifest|player|movie)$/i;
-    if (!name || GENERIC.test(name) || (site && name.toLowerCase() === site.toLowerCase())) {
-      name = [site || 'video', date, String(task.seq).padStart(3, '0')].filter(Boolean).join('_');
+    let name;
+    if (task.customName) {
+      // 用户自定义文件名：直接采用，不走模板与兜底
+      name = task.customName;
+    } else {
+      name = cfg.namingTemplate || '{title}';
+      name = name
+        .replace(/\{title\}/g, task.title)
+        .replace(/\{site\}/g, site)
+        .replace(/\{date\}/g, date)
+        .replace(/\{quality\}/g, task.quality || '')
+        .replace(/\{index\}/g, String(task.seq).padStart(3, '0'));
+      // 无信息量标题（站点没提供标题 / 纯站名）时，用 站名_日期_序号 兜底，避免一堆「视频.mp4」「视频 (1).mp4」
+      const GENERIC = /^(视频|video|media|index|playlist|manifest|player|movie)$/i;
+      if (!name || GENERIC.test(name) || (site && name.toLowerCase() === site.toLowerCase())) {
+        name = [site || 'video', date, String(task.seq).padStart(3, '0')].filter(Boolean).join('_');
+      }
     }
     name = util.sanitizeFilename(name);
     // 按站点分文件夹
