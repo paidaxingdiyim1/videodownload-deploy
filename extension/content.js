@@ -784,9 +784,12 @@
       const segs = parsed.segments;
       if (!segs.length) throw new Error('播放列表里没有分片');
 
+      // 按分片类型判定容器：TS 分片存 .ts，fmp4（.m4s/.mp4）分片存 .mp4
+      const ext = /\.(m4s|mp4)(\?|$)/i.test(segs[0]) ? 'mp4' : 'ts';
+
       const start = await send({
         type: 'upload:start',
-        title, site: location.hostname.replace(/^www\./, ''), ext: 'ts', customName, referer,
+        title, site: location.hostname.replace(/^www\./, ''), ext, customName, referer,
       });
       if (!start || !start.ok) throw new Error((start && start.error) || '无法开始上传');
 

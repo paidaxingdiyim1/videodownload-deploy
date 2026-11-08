@@ -149,28 +149,13 @@ async function finalizeUpload(up) {
     : cfg.downloadDir;
   fs.mkdirSync(dir, { recursive: true });
 
-  let src = up.part;
-  let ext = up.ext;
-  // TS → MP4 转封装（-c copy 无损，快）；失败则保留 TS
-  if (ext === 'ts') {
-    try {
-      const tools = await ytdlp.detect();
-      if (tools.ffmpeg && tools.ffmpeg.ok) {
-        const tmpMp4 = up.part + '.mp4';
-        const r = await ytdlp.run(tools.ffmpeg.cmd, ['-y', '-i', up.part, '-c', 'copy', '-movflags', '+faststart', tmpMp4]);
-        if (r.code === 0 && fs.existsSync(tmpMp4) && fs.statSync(tmpMp4).size > 0) {
-          try { fs.unlinkSync(up.part); } catch (_) {}
-          src = tmpMp4;
-          ext = 'mp4';
-        }
-      }
-    } catch (_) { /* 转封装失败保留 TS */ }
-  }
-
+  // 直接按浏览器端判定好的容器保存（TS 存 .ts、fmp4 存 .mp4），不做 ffmpeg
+  // 转封装——服务器上的 ffmpeg 静态版对 mpegts→mp4 会段错误，且二者 Jellyfin 都能播
+  const ext = up.ext === 'mp4' ? 'mp4' : (up.ext === 'ts' ? 'ts' : 'mp4');
   let candidate = path.join(dir, `${name}.${ext}`);
   let n = 1;
   while (fs.existsSync(candidate)) candidate = path.join(dir, `${name} (${n++}).${ext}`);
-  moveUpload(src, candidate);
+  moveUpload(up.part, candidate);
   return candidate;
 }
 
