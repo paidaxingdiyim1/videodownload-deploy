@@ -185,8 +185,9 @@
     btn.type = 'button';
     btn.className = 'vbtn';
     btn.dataset.s = 'idle';
-    btn.innerHTML = `${ICON_DL}<span class="lab">下载</span>`;
-    btn.title = '下载这个视频';
+    const isDy = isDouyin();
+    btn.innerHTML = `${ICON_DL}<span class="lab">${isDy ? '解析' : '下载'}</span>`;
+    btn.title = isDy ? '解析当前视频的播放地址' : '下载这个视频';
 
     const stop = (e) => { e.stopPropagation(); };
     btn.addEventListener('mousedown', stop, true);
@@ -196,12 +197,18 @@
       e.preventDefault();
       e.stopPropagation();
       const rec = state.tracked.get(v);
-      if (rec && rec.state === 'running') return;
-      startDownloadFor(v, rec);
+      if (!rec || rec.state === 'running' || rec.state === 'loading') return;
+      // 抖音：两段式——先「解析」拿到官方地址（含音轨+文案），就绪后变「下载」；
+      // 其它站点：直接下载（无需开标签页解析）
+      if (isDouyin() && !rec.aweme) {
+        parseFor(v, rec);
+      } else {
+        startDownloadFor(v, rec);
+      }
     }, true);
 
     state.layer.appendChild(btn);
-    state.tracked.set(v, { btn, state: 'idle', taskId: null, hidden: true });
+    state.tracked.set(v, { btn, state: 'idle', taskId: null, hidden: true, aweme: null });
   }
 
   function setBtnState(rec, s, label, tip) {
@@ -595,6 +602,31 @@
     });
   }
 
+  /** 抖音悬浮「解析」：按作品 ID 解析官方播放地址（含音轨+文案），成功后按钮变「下载」 */
+  async function parseFor(video, rec) {
+    if (rec) setBtnState(rec, 'loading', '解析中…', '正在解析播放地址');
+    const awemeId = activeAwemeId(video) || '';
+    let src = '';
+    try { src = video.currentSrc || ''; } catch (_) {}
+    const res = await send({
+      type: 'parse:aweme',
+      awemeId,
+      // blob: 地址不可用，交给后台按 ID 反查；有真实流 URL 时一并带上
+      url: /^https?:/i.test(src) ? src : '',
+      referer: location.href,
+    });
+    if (res && res.ok && res.aweme && /^https?:/i.test(res.aweme.video || '')) {
+      rec.aweme = res.aweme;
+      const title = res.aweme.desc || '';
+      setBtnState(rec, 'idle', '下载', title ? ('已解析：' + title + ' ｜ 点击下载') : '已解析，点击下载');
+      return;
+    }
+    if (rec) {
+      setBtnState(rec, 'error', '解析失败', (res && res.error) || '未能解析播放地址，请先播放几秒再试');
+      setTimeout(() => rec.btn.isConnected && setBtnState(rec, 'idle', '解析', '解析当前视频的播放地址'), 4500);
+    }
+  }
+
   async function startDownloadFor(video, rec, explicit, target) {
     const btn = rec ? rec.btn : null;
     if (!target) target = await chooseTarget(btn);
@@ -613,16 +645,17 @@
       return;
     }
 
-    const title = (explicit && explicit.title) || pageTitle(video);
+    // 已解析过（抖音两段式）或走普通嗅探
+    const aweme = rec && rec.aweme ? rec.aweme : null;
+    const title = aweme ? (aweme.desc || pageTitle(video)) : ((explicit && explicit.title) || pageTitle(video));
 
     const result = await send({
       type: 'download',
-      url: pick.url,
-      kind: pick.kind || 'auto',
+      url: aweme ? aweme.video : pick.url,
+      kind: aweme ? 'mp4' : (pick.kind || 'auto'),
       title,
-      // 抖音：带上当前作品 ID，后台未命中时自动补缓存（详情页解析），
-      // 保证悬浮下载也能拿到官方音轨 + 作品文案（修复时序竞态）
-      awemeId: activeAwemeId(video) || '',
+      // 抖音：带作品 ID，后台未命中时自动补缓存；普通站点 activeAwemeId 为空
+      awemeId: aweme ? (aweme.id || '') : (activeAwemeId(video) || ''),
       referer: location.href,
       tabId: null,
       target,
