@@ -767,18 +767,19 @@
     const referer = msg.referer || location.href;
     try {
       const hdrs = { 'Referer': referer };
-      let res = await fetch(url, { headers: hdrs, credentials: 'include' });
-      if (!res.ok) throw new Error('浏览器获取播放列表失败：HTTP ' + res.status + '（' + url.slice(0, 70) + '…）');
-      let text = await res.text();
-      let baseUrl = res.url || url;
+      // 用主世界 fetch（inject.js 执行，与页面 hls.js 同上下文，能过 Cloudflare）
+      let r = await wvdFetch(url, hdrs);
+      if (!r.ok) throw new Error('浏览器获取播放列表失败：HTTP ' + r.status + '（' + url.slice(0, 70) + '…）');
+      let text = new TextDecoder().decode(r.data);
+      let baseUrl = r.finalUrl || url;
       let parsed = parseM3U8Text(text, baseUrl);
 
       if (parsed.isMaster && parsed.variants.length) {
         parsed.variants.sort((a, b) => b.bandwidth - a.bandwidth);
-        res = await fetch(parsed.variants[0].url, { headers: hdrs, credentials: 'include' });
-        if (!res.ok) throw new Error('浏览器获取播放列表失败：HTTP ' + res.status + '（' + parsed.variants[0].url.slice(0, 70) + '…）');
-        text = await res.text();
-        baseUrl = res.url || parsed.variants[0].url;
+        r = await wvdFetch(parsed.variants[0].url, hdrs);
+        if (!r.ok) throw new Error('浏览器获取播放列表失败：HTTP ' + r.status + '（' + parsed.variants[0].url.slice(0, 70) + '…）');
+        text = new TextDecoder().decode(r.data);
+        baseUrl = r.finalUrl || parsed.variants[0].url;
         parsed = parseM3U8Text(text, baseUrl);
       }
       const segs = parsed.segments;
@@ -795,10 +796,9 @@
 
       const uploadId = start.uploadId;
       for (let i = 0; i < segs.length; i++) {
-        const sr = await fetch(segs[i], { headers: hdrs, credentials: 'include' });
+        const sr = await wvdFetch(segs[i], hdrs);
         if (!sr.ok) throw new Error('分片 ' + (i + 1) + ' 下载失败：HTTP ' + sr.status);
-        const buf = await sr.arrayBuffer();
-        const cr = await send({ type: 'upload:chunk', uploadId, data: buf });
+        const cr = await send({ type: 'upload:chunk', uploadId, data: sr.data });
         if (!cr || !cr.ok) throw new Error((cr && cr.error) || '上传分片失败');
       }
       const fin = await send({ type: 'upload:finish', uploadId, customName });
@@ -917,8 +917,29 @@
       while (state.awemeItems.size > 300) {
         state.awemeItems.delete(state.awemeItems.keys().next().value);
       }
+    } else if (d.type === 'wvd-fetch-result') {
+      const w = fetchWaiters.get(d.id);
+      if (w) {
+        fetchWaiters.delete(d.id);
+        if (d.ok) w.resolve(d);
+        else w.reject(new Error(d.error || ('HTTP ' + d.status)));
+      }
     }
   });
+
+  /* 主世界 fetch 桥接（inject.js 执行，绕过隔离世界被 Cloudflare 单独拦截） */
+  let fetchSeq = 0;
+  const fetchWaiters = new Map();
+  function wvdFetch(url, headers) {
+    return new Promise((resolve, reject) => {
+      const id = ++fetchSeq;
+      fetchWaiters.set(id, { resolve, reject });
+      window.postMessage({ __wvd: 1, type: 'wvd-fetch', id, url, headers }, '*');
+      setTimeout(() => {
+        if (fetchWaiters.has(id)) { fetchWaiters.delete(id); reject(new Error('主世界 fetch 超时')); }
+      }, 90000);
+    });
+  }
 
   /** 当前视频的作品 id：详情页取路径；信息流取卡片的 data-e2e-vid（分享链接里的 ID） */
   function activeAwemeId(v) {

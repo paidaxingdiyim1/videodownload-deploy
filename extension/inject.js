@@ -48,6 +48,24 @@
     try { window.postMessage({ __wvd: 1, type, ...data }, '*'); } catch (_) {}
   };
 
+  // 主世界 fetch 桥接：content script 在隔离世界发起的跨域 fetch 可能被
+  // Cloudflare 单独拦（与页面 hls.js 的请求上下文有差异）；这里在主世界执行
+  // fetch（与 hls.js 完全同上下文），把结果（含二进制）回传 content
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || d.__wvd !== 1 || d.type !== 'wvd-fetch') return;
+    const id = d.id;
+    (async () => {
+      try {
+        const res = await fetch(d.url, { headers: d.headers || {}, credentials: 'include' });
+        const buf = await res.arrayBuffer();
+        post('wvd-fetch-result', { id, ok: res.ok, status: res.status, finalUrl: res.url || d.url, data: buf });
+      } catch (err) {
+        post('wvd-fetch-result', { id, ok: false, error: String(err && err.message || err) });
+      }
+    })();
+  });
+
   const origCreate = URL.createObjectURL.bind(URL);
   URL.createObjectURL = function (obj) {
     const url = origCreate(obj);
