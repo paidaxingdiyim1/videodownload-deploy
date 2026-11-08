@@ -356,6 +356,25 @@ class TaskStore {
         name = [site || 'video', date, String(task.seq).padStart(3, '0')].filter(Boolean).join('_');
       }
     }
+    // 剧集识别：有剧名 + 集数的，按 Jellyfin 标准剧集结构落盘
+    //   downloads/<站点>/<剧名>/Season XX/<剧名> - SXXEXX.ext
+    const ep = parseEpisode(name);
+    if (ep && ep.show && ep.episode > 0) {
+      const show = util.sanitizeFilename(ep.show);
+      const season = String(ep.season || 1).padStart(2, '0');
+      const epNum = String(ep.episode).padStart(2, '0');
+      const base = `${show} - S${season}E${epNum}`;
+      const baseDir = cfg.siteFolders && site
+        ? path.join(cfg.downloadDir, util.sanitizeFilename(site))
+        : cfg.downloadDir;
+      const dir = path.join(baseDir, show, `Season ${season}`);
+      fs.mkdirSync(dir, { recursive: true });
+      let candidate = path.join(dir, `${base}.${ext}`);
+      let n = 1;
+      while (fs.existsSync(candidate)) candidate = path.join(dir, `${base} (${n++}).${ext}`);
+      return candidate;
+    }
+
     name = util.sanitizeFilename(name);
     // 按站点分文件夹
     const dir = cfg.siteFolders && site
@@ -389,6 +408,52 @@ class TaskStore {
     }
     this.emit('cleared', {});
   }
+}
+
+/** 中文数字转阿拉伯（一~九十九、百） */
+function cnToInt(s) {
+  s = String(s || '').trim();
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  const CN = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (s.length === 1) return CN[s] != null ? CN[s] : 0;
+  if (s === '十') return 10;
+  if (s.includes('十')) {
+    const parts = s.split('十');
+    return (parts[0] ? (CN[parts[0]] || 0) : 1) * 10 + (parts[1] ? (CN[parts[1]] || 0) : 0);
+  }
+  if (s.includes('百')) {
+    const parts = s.split('百');
+    return (parts[0] ? (CN[parts[0]] || 1) : 1) * 100 + (parts[1] ? (CN[parts[1]] || 0) : 0);
+  }
+  return 0;
+}
+
+/** 从标题解析剧集：返回 {show, season, episode} 或 null（无剧名/集数则不归集） */
+function parseEpisode(title) {
+  const t = String(title || '').trim();
+  if (!t) return null;
+  let m = t.match(/[Ss](\d{1,2})\s*[Ee](\d{1,3})/);
+  if (m) {
+    const show = t.slice(0, t.indexOf(m[0])).replace(/[《》「」【】\[\]#·\s]+/g, ' ').trim();
+    return { show, season: parseInt(m[1], 10), episode: parseInt(m[2], 10) };
+  }
+  m = t.match(/[Ee][Pp]\s*(\d{1,3})/);
+  if (m) {
+    const show = t.replace(m[0], '').replace(/[《》「」【】\[\]#·\s]+/g, ' ').trim();
+    return { show, season: 1, episode: parseInt(m[1], 10) };
+  }
+  m = t.match(/第\s*([0-9]+|[零一二两三四五六七八九十百]+)\s*[集话期]/);
+  if (m) {
+    const before = t.slice(0, m.index);
+    // 剧名：优先书名号内容，否则取「第X集」前的文字（去标签/标点）
+    let show = '';
+    const book = before.match(/《([^》]{1,40})》/);
+    if (book) show = book[1].trim();
+    else show = before.replace(/#\s*[^\s#]+/g, ' ').replace(/[【】\[\]「」·、，。！？!?:：;；'"‘’“”\s]+/g, ' ').trim();
+    const ep = cnToInt(m[1]);
+    if (ep > 0 && show) return { show: show.slice(0, 60), season: 1, episode: ep };
+  }
+  return null;
 }
 
 /** 把 yt-dlp 等底层英文错误翻译成用户能看懂的提示 */
