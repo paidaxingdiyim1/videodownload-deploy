@@ -620,6 +620,9 @@
       url: pick.url,
       kind: pick.kind || 'auto',
       title,
+      // 抖音：带上当前作品 ID，后台未命中时自动补缓存（详情页解析），
+      // 保证悬浮下载也能拿到官方音轨 + 作品文案（修复时序竞态）
+      awemeId: activeAwemeId(video) || '',
       referer: location.href,
       tabId: null,
       target,

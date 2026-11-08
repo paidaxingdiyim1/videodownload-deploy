@@ -634,23 +634,31 @@ async function startDownload(msg, sender) {
   // 抖音：反查所属作品（官方音轨 + 作品文案标题），命中则改下「合并后的完整视频」。
   // 覆盖三种情况：流 URL（aweme:find）、作品页 /video/<id>（aweme:get）、短链
   let awemeHit = null;
+  const awid = String(msg.awemeId || '').match(/^\d{15,20}$/) ? msg.awemeId : '';
   if (['video', 'mp4', 'audio', 'page'].includes(kind)) {
     try {
       const tabs = await chrome.tabs.query({});
       const dt = tabs.find((t) => t.id != null && t.url && /douyin\.com/.test(t.url));
       if (dt) {
         const vid = String(msg.url).match(/\/video\/(\d{15,20})/);
-        const r = vid
-          ? await chrome.tabs.sendMessage(dt.id, { type: 'aweme:get', id: vid[1] })
-          : await chrome.tabs.sendMessage(dt.id, { type: 'aweme:find', url: msg.url });
+        let r;
+        if (awid) {
+          r = await chrome.tabs.sendMessage(dt.id, { type: 'aweme:get', id: awid });
+        } else if (vid) {
+          r = await chrome.tabs.sendMessage(dt.id, { type: 'aweme:get', id: vid[1] });
+        } else {
+          r = await chrome.tabs.sendMessage(dt.id, { type: 'aweme:find', url: msg.url });
+        }
         if (r && r.ok && r.aweme && /^https?:/i.test(r.aweme.video || '')) awemeHit = r.aweme;
       }
     } catch (_) {}
-    // 作品页反查未命中：自动后台打开详情页让浏览器解析（不再走必败的 yt-dlp）
-    if (!awemeHit && kind === 'page') {
-      const vid = String(msg.url).match(/\/video\/(\d{15,20})/);
-      if (vid) {
-        const fb = await parsePageFallback(vid[1]);
+    // 反查未命中：自动后台打开详情页让浏览器解析补缓存（不再走必败的 yt-dlp）。
+    // 覆盖：作品页 kind=page、或带 awemeId 的悬浮下载、或抖音页面的流下载
+    if (!awemeHit) {
+      const vid = String(msg.url).match(/\/video\/(\d{15,20})/)?.[1] || awid || '';
+      const isDouyin = awid || /douyin\.com/.test(pageUrl) || /douyin\.com/.test(msg.referer || '');
+      if (vid && /^\d{15,20}$/.test(vid) && (kind === 'page' || isDouyin)) {
+        const fb = await parsePageFallback(vid);
         if (fb.ok) awemeHit = fb.aweme;
       }
     }
