@@ -530,18 +530,55 @@
     // 4.5) 站点特化标题（抖音等，优先在当前视频所在卡片里找）
     if (!t) t = siteTitle(video);
 
-    // 4.7) 页面主标题（h1）增强：h1 带集数且剧名与已取标题开头一致时优先用 h1。
-    // 很多影视站 document.title/og:title 里的「更新至第X集」是剧集最新进度，
-    // 不是当前播放集；页面 h1 才是当前集（如「FX战士久留美 第03集」）
+    // 4.7) 当前集数提取（通用三层信号）。影视站 document.title/og:title 里的
+    // 「更新至第X集」是剧集最新进度，不是当前播放集（olevo 实测误标 E06）。
+    // 按可靠性依次尝试：
+    //   a) 页面主标题 h1/h2（如「FX战士久留美 第03集」）
+    //   b) 选集面板当前项（▶ 标记或高亮样式，如「第03集▶」）
+    //   c) 播放页 URL 路径的集数段（CMS 常见 /play/xxx-3-1.html）
     try {
-      const h1 = document.querySelector('h1');
-      const h1t = h1 ? String(h1.textContent || '').replace(/\s+/g, ' ').trim() : '';
-      if (h1t && h1t.length <= 80 && /第\s*\d+\s*[集话期]|[Ss]\d{1,2}\s*[Ee]\d{1,3}/.test(h1t)) {
-        const base = (t || '').replace(/\s+/g, ' ').slice(0, 8);
-        if (!t || (base && h1t.startsWith(base))) {
-          const w = titleWorth(h1t, host);
-          if (w) t = w;
+      const EP_PAT = /第\s*(\d{1,3})\s*[集话期]/;
+      let curEp = null;
+      let h1Show = '';
+      // a) 主标题：全量扫描 h1/h2，取第一个带集数的（跳过过长的，如推荐区标题）
+      for (const el of document.querySelectorAll('h1, h2')) {
+        const txt = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!txt || txt.length > 60) continue;
+        const m = txt.match(EP_PAT);
+        if (m) { h1Show = txt.replace(EP_PAT, '').trim(); curEp = parseInt(m[1], 10); break; }
+      }
+      // b) 选集面板当前项：文本带 ▶ 或元素高亮 class
+      if (curEp == null) {
+        const candidates = document.querySelectorAll('a, button, li, span, div');
+        for (const el of candidates) {
+          const txt = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (!txt || txt.length > 12) continue;
+          const m = txt.match(EP_PAT);
+          if (!m) continue;
+          const cls = String(el.className || '');
+          if (txt.includes('▶') || /(^|[\s_-])(active|current|cur|on|selected|checked)([\s_-]|$)/i.test(cls)) {
+            curEp = parseInt(m[1], 10);
+            break;
+          }
         }
+      }
+      // c) 播放页 URL 集数段
+      if (curEp == null) {
+        const pm = location.pathname.match(/-(\d{1,3})-\d+\.(?:html?|htm)$/i)
+          || location.pathname.match(/(?:^|\/)ep(?:isode)?[-_]?(\d{1,3})(?:[-_.]|$)/i);
+        if (pm) curEp = parseInt(pm[1], 10);
+      }
+      if (curEp != null) {
+        // 剧名：优先 h1 去集数后的文本；否则用已取标题「- / 更新至」前的部分。
+        // h1 剧名与标题剧名明显不符时（推荐位串台），改用标题剧名 + 提取到的集数
+        let show = h1Show || '';
+        if (t) {
+          const tShow = t.split(/\s*[-–—]\s*/)[0].replace(/\s*更新至.*$/, '').trim();
+          if (tShow) {
+            if (!show || (show.slice(0, 4) !== tShow.slice(0, 4))) show = tShow;
+          }
+        }
+        if (show) t = `${show} 第${String(curEp).padStart(2, '0')}集`;
       }
     } catch (_) { /* 忽略 */ }
 
