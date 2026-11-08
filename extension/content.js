@@ -716,6 +716,96 @@
     });
   }
 
+  /* ------------------ 浏览器端 HLS 下载（Cloudflare 保护站回退） ------------------ */
+
+  function parseM3U8Text(text, baseUrl) {
+    const lines = String(text || '').split(/\r?\n/);
+    const variants = [];
+    const segments = [];
+    let isMaster = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('#EXT-X-STREAM-INF')) {
+        isMaster = true;
+        const bw = Number((line.match(/BANDWIDTH=(\d+)/) || [])[1] || 0);
+        for (let j = i + 1; j < lines.length; j++) {
+          const nl = lines[j].trim();
+          if (nl && !nl.startsWith('#')) { variants.push({ bandwidth: bw, url: new URL(nl, baseUrl).toString() }); i = j; break; }
+        }
+      } else if (line.startsWith('#EXTINF')) {
+        for (let j = i + 1; j < lines.length; j++) {
+          const nl = lines[j].trim();
+          if (nl && !nl.startsWith('#')) { segments.push(new URL(nl, baseUrl).toString()); i = j; break; }
+        }
+      }
+    }
+    return { isMaster, variants, segments };
+  }
+
+  /** 当前正在播放视频的按钮记录（浏览器下载回退时更新它的状态） */
+  function activeRec() {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let best = null;
+    for (const [v, rec] of state.tracked) {
+      if (!v.isConnected || rec.hidden) continue;
+      const r = v.getBoundingClientRect();
+      if (r.width < 80 || r.height < 60) continue;
+      const ix = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+      const iy = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+      if (ix * iy < 0.3 * r.width * r.height) continue;
+      const playing = !v.paused && !v.ended;
+      if (!best || (playing && !best.playing) || (playing === best.playing && ix * iy > best.area)) best = { rec, playing, area: ix * iy };
+    }
+    return best ? best.rec : null;
+  }
+
+  /** 浏览器端下载 HLS（页面同源，能过 Cloudflare）+ 分片上传服务器 */
+  async function browserDownload(msg) {
+    const url = msg.url;
+    const title = msg.title || '视频';
+    const customName = msg.customName || '';
+    const referer = msg.referer || location.href;
+    try {
+      const hdrs = { 'Referer': referer };
+      let res = await fetch(url, { headers: hdrs, credentials: 'include' });
+      if (!res.ok) throw new Error('浏览器获取播放列表失败：HTTP ' + res.status);
+      let text = await res.text();
+      let baseUrl = res.url || url;
+      let parsed = parseM3U8Text(text, baseUrl);
+
+      if (parsed.isMaster && parsed.variants.length) {
+        parsed.variants.sort((a, b) => b.bandwidth - a.bandwidth);
+        res = await fetch(parsed.variants[0].url, { headers: hdrs, credentials: 'include' });
+        if (!res.ok) throw new Error('浏览器获取播放列表失败：HTTP ' + res.status);
+        text = await res.text();
+        baseUrl = res.url || parsed.variants[0].url;
+        parsed = parseM3U8Text(text, baseUrl);
+      }
+      const segs = parsed.segments;
+      if (!segs.length) throw new Error('播放列表里没有分片');
+
+      const start = await send({
+        type: 'upload:start',
+        title, site: location.hostname.replace(/^www\./, ''), ext: 'ts', customName, referer,
+      });
+      if (!start || !start.ok) throw new Error((start && start.error) || '无法开始上传');
+
+      const uploadId = start.uploadId;
+      for (let i = 0; i < segs.length; i++) {
+        const sr = await fetch(segs[i], { headers: hdrs, credentials: 'include' });
+        if (!sr.ok) throw new Error('分片 ' + (i + 1) + ' 下载失败：HTTP ' + sr.status);
+        const buf = await sr.arrayBuffer();
+        const cr = await send({ type: 'upload:chunk', uploadId, data: buf });
+        if (!cr || !cr.ok) throw new Error((cr && cr.error) || '上传分片失败');
+      }
+      const fin = await send({ type: 'upload:finish', uploadId, customName });
+      if (!fin || !fin.ok) throw new Error((fin && fin.error) || '保存失败');
+      return { ok: true, filePath: fin.filePath, fileName: fin.fileName };
+    } catch (e) {
+      return { ok: false, error: String(e && e.message || e) };
+    }
+  }
+
   /** 抖音悬浮「解析」：按作品 ID 解析官方播放地址（含音轨+文案），成功后按钮变「下载」 */
   async function parseFor(video, rec) {
     if (rec) setBtnState(rec, 'loading', '解析中…', '正在解析播放地址');
@@ -860,6 +950,22 @@
     if (msg && msg.type === 'media:resync') {
       broadcastTitle(true);
       broadcastCurrent(true);
+      return false;
+    }
+    // 服务器下载被 Cloudflare 拦（403）→ 回退浏览器本地下载 + 上传服务器
+    if (msg && msg.type === 'browser-download') {
+      const rec = activeRec();
+      if (rec) setBtnState(rec, 'running', '浏览器下载中…', '绕过 Cloudflare，浏览器直下后上传服务器');
+      browserDownload(msg).then((r) => {
+        const rr = activeRec() || rec;
+        if (r.ok) {
+          if (rr) { setBtnState(rr, 'done', '已保存', '已保存到服务器：' + (r.fileName || '下载完成')); }
+          setTimeout(() => { const r2 = activeRec(); if (r2) setBtnState(r2, 'idle', '下载'); }, 5000);
+        } else {
+          if (rr) { setBtnState(rr, 'error', '失败', r.error || '浏览器下载失败'); }
+          setTimeout(() => { const r2 = activeRec(); if (r2) setBtnState(r2, 'idle', '下载'); }, 5200);
+        }
+      });
       return false;
     }
     if (!msg || msg.type !== 'task:update') return false;

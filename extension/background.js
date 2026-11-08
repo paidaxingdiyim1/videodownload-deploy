@@ -194,6 +194,28 @@ async function pair(target = 'server', force) {
   return '';
 }
 
+/** 上传二进制分片到服务器（浏览器下载回退用），返回 {ok,size} */
+async function uploadChunk(uploadId, dataBuf) {
+  const cfg = await getConfig();
+  const t = resolveTarget('server', cfg);
+  const { base } = endpointFor(cfg, t);
+  let token = await getToken(t);
+  if (!token) token = await pair(t);
+  const res = await fetch(`${base}/api/upload/chunk?uploadId=${encodeURIComponent(uploadId)}`, {
+    method: 'POST',
+    headers: { 'X-Auth-Token': token || '' },
+    body: dataBuf,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+/** 上传会话开始/结束（JSON body），复用 api() */
+async function uploadJson(pathname, payload) {
+  return api(pathname, { method: 'POST', body: payload, timeout: 30000, target: 'server' });
+}
+
 async function health(target) {
   const cfg = await getConfig();
   const t = resolveTarget(target, cfg);
@@ -711,7 +733,10 @@ async function startDownload(msg, sender) {
   const data = await api('/api/download', { method: 'POST', body: payload, timeout: 15000, target });
   if (!data.ok || !data.task) throw new Error(data.error || '创建任务失败');
 
-  activeTasks.set(data.task.id, { tabId, frameId: sender?.frameId ?? 0, target });
+  activeTasks.set(data.task.id, {
+    tabId, frameId: sender?.frameId ?? 0, target,
+    url: payload.url, title: payload.title, customName: payload.customName || '', referer: payload.referer || '',
+  });
   ensurePolling();
   return data.task;
 }
@@ -748,6 +773,16 @@ async function pollOnce() {
         chrome.tabs.sendMessage(info.tabId, { type: 'task:update', task: t, target }, { frameId: info.frameId }).catch(() => {
           chrome.tabs.sendMessage(info.tabId, { type: 'task:update', task: t, target }).catch(() => {});
         });
+        // Cloudflare 强防护站（如 surrit）：服务器下载 403 → 回退浏览器本地下载
+        if (t.status === 'error' && /403|forbidden|cloudflare|获取播放列表失败|防盗链/i.test(String(t.error || ''))) {
+          chrome.tabs.sendMessage(info.tabId, {
+            type: 'browser-download',
+            url: info.url,
+            title: info.title || t.title || '',
+            customName: info.customName || '',
+            referer: info.referer || '',
+          }).catch(() => {});
+        }
         if (['done', 'error', 'canceled'].includes(t.status)) {
           activeTasks.delete(id);
         }
@@ -989,6 +1024,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case 'download': {
           const task = await startDownload(msg, sender);
           return sendResponse({ ok: true, task });
+        }
+        case 'upload:start': {
+          const r = await uploadJson('/api/upload/start', {
+            title: msg.title, site: msg.site, ext: msg.ext, customName: msg.customName, referer: msg.referer,
+          });
+          return sendResponse(r);
+        }
+        case 'upload:chunk': {
+          try {
+            const r = await uploadChunk(msg.uploadId, msg.data);
+            return sendResponse({ ok: true, size: r.size });
+          } catch (e) {
+            return sendResponse({ ok: false, error: String(e && e.message || e) });
+          }
+        }
+        case 'upload:finish': {
+          const r = await uploadJson('/api/upload/finish?uploadId=' + encodeURIComponent(msg.uploadId || ''), {
+            customName: msg.customName || '',
+          });
+          // 完成后提示用户
+          if (r.ok) {
+            chrome.notifications.create({
+              type: 'basic',
+              iconUrl: 'icons/icon128.png',
+              title: '已保存到服务器',
+              message: r.fileName || (r.filePath ? r.filePath.split('/').pop() : '下载完成'),
+            }).catch(() => {});
+          }
+          return sendResponse(r);
         }
         case 'parse:aweme': {
           // 悬浮「解析」按钮：按作品 ID / 流 URL 解析出官方播放地址（含音轨+文案）。

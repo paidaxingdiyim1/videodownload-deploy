@@ -12,7 +12,7 @@ const ytdlp = require('./ytdlp');
 const util = require('./util');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.7';
+const VERSION = '1.5.8';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -121,6 +121,57 @@ function readBody(req, limit = 2 * 1024 * 1024) {
     });
     req.on('error', reject);
   });
+}
+
+/* ------------------------------------------------------------------ */
+/*  浏览器端上传（Cloudflare 强防护站绕过：扩展在浏览器里下载后传上来）  */
+/* ------------------------------------------------------------------ */
+
+/** uploadId -> { part, title, site, ext, customName, referer, size, at } */
+const uploads = new Map();
+
+function moveUpload(from, to) {
+  try {
+    fs.renameSync(from, to);
+  } catch (e) {
+    if (e.code === 'EXDEV') { fs.copyFileSync(from, to); fs.unlinkSync(from); }
+    else throw e;
+  }
+}
+
+async function finalizeUpload(up) {
+  const site = up.site || (() => { try { return new URL(up.referer || '').hostname.replace(/^www\./, ''); } catch (_) { return ''; } })();
+  let name = up.customName || up.title;
+  if (!up.customName) name = name.replace(/\s*[-–—]\s*[^-–—]*$/, '').trim(); // 去掉「- 站名」后缀
+  name = util.sanitizeFilename(name) || 'video';
+  const dir = cfg.siteFolders && site
+    ? path.join(cfg.downloadDir, util.sanitizeFilename(site))
+    : cfg.downloadDir;
+  fs.mkdirSync(dir, { recursive: true });
+
+  let src = up.part;
+  let ext = up.ext;
+  // TS → MP4 转封装（-c copy 无损，快）；失败则保留 TS
+  if (ext === 'ts') {
+    try {
+      const tools = await ytdlp.detect();
+      if (tools.ffmpeg && tools.ffmpeg.ok) {
+        const tmpMp4 = up.part + '.mp4';
+        const r = await ytdlp.run(tools.ffmpeg.cmd, ['-y', '-i', up.part, '-c', 'copy', '-movflags', '+faststart', tmpMp4]);
+        if (r.code === 0 && fs.existsSync(tmpMp4) && fs.statSync(tmpMp4).size > 0) {
+          try { fs.unlinkSync(up.part); } catch (_) {}
+          src = tmpMp4;
+          ext = 'mp4';
+        }
+      }
+    } catch (_) { /* 转封装失败保留 TS */ }
+  }
+
+  let candidate = path.join(dir, `${name}.${ext}`);
+  let n = 1;
+  while (fs.existsSync(candidate)) candidate = path.join(dir, `${name} (${n++}).${ext}`);
+  moveUpload(src, candidate);
+  return candidate;
 }
 
 /* ----------------------------- 自更新 ----------------------------- */
@@ -273,6 +324,59 @@ const server = http.createServer(async (req, res) => {
         withSeparateAudio: !!body.withSeparateAudio,
       });
       return send(res, 200, { ok: true, task: snap }, cors);
+    }
+
+    /* ---- 浏览器端上传（Cloudflare 强防护站绕过） ---- */
+    if (pathname === '/api/upload/start' && req.method === 'POST') {
+      const body = await readBody(req);
+      const id = 'up' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      const tmpDir = path.join(cfg.downloadDir, '.tmp-upload');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      uploads.set(id, {
+        part: path.join(tmpDir, id + '.part'),
+        title: String(body.title || '视频').trim(),
+        site: String(body.site || '').trim(),
+        ext: String(body.ext || 'mp4').replace(/^\./, '').toLowerCase(),
+        customName: String(body.customName || '').trim(),
+        referer: String(body.referer || '').trim(),
+        size: 0,
+        at: Date.now(),
+      });
+      return send(res, 200, { ok: true, uploadId: id }, cors);
+    }
+
+    if (pathname === '/api/upload/chunk' && req.method === 'POST') {
+      const id = url.searchParams.get('uploadId') || '';
+      const up = uploads.get(id);
+      if (!up) return send(res, 404, { ok: false, error: '上传会话不存在或已过期' }, cors);
+      await new Promise((resolve, reject) => {
+        const ws = fs.createWriteStream(up.part, { flags: 'a' });
+        req.on('data', (c) => { up.size += c.length; });
+        req.pipe(ws);
+        ws.on('finish', resolve);
+        ws.on('error', reject);
+        req.on('error', reject);
+      });
+      up.at = Date.now();
+      return send(res, 200, { ok: true, size: up.size }, cors);
+    }
+
+    if (pathname === '/api/upload/finish' && req.method === 'POST') {
+      const id = url.searchParams.get('uploadId') || '';
+      const up = uploads.get(id);
+      if (!up) return send(res, 404, { ok: false, error: '上传会话不存在或已过期' }, cors);
+      let body = {};
+      try { body = await readBody(req); } catch (_) {}
+      if (body.customName) up.customName = String(body.customName).trim();
+      if (body.title) up.title = String(body.title).trim();
+      try {
+        const finalPath = await finalizeUpload(up);
+        return send(res, 200, { ok: true, filePath: finalPath, fileName: path.basename(finalPath) }, cors);
+      } catch (e) {
+        return send(res, 500, { ok: false, error: '保存失败：' + e.message }, cors);
+      } finally {
+        uploads.delete(id);
+      }
     }
 
     /* ---- 任务列表 / 详情 / 取消 / 清理 ---- */
