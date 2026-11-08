@@ -583,29 +583,45 @@ async function cookieStatusFor(url, kind) {
 }
 
 /** 抖音解析兜底：本地缓存未命中时，后台打开作品详情页，让浏览器自己完成
- *  acrawler 签名并请求 detail API（inject.js 拦截），轮询缓存直到拿到播放地址 */
+ *  acrawler 签名并请求 detail API（inject.js 拦截），轮询缓存直到拿到播放地址。
+ *  防护（v1.6.6）：同一作品同时只解析一次（详情页自己也会广播 page:current，
+ *  若不去重会「开页→广播→再开页」无限套娃）；失败后 2 分钟冷却；全局最多 2 个并发 */
+const awemePending = new Set();
+const awemeFailedAt = new Map();
+const AWEME_COOLDOWN = 120000;
+
 async function parsePageFallback(awemeId) {
+  if (awemePending.has(awemeId)) return { ok: false, error: '该作品正在解析中' };
+  const failedAt = awemeFailedAt.get(awemeId) || 0;
+  if (Date.now() - failedAt < AWEME_COOLDOWN) return { ok: false, error: '该作品刚解析失败，稍后再试' };
+  if (awemePending.size >= 2) return { ok: false, error: '已有解析任务进行中' };
+  awemePending.add(awemeId);
   let tab;
   try {
-    tab = await chrome.tabs.create({ url: 'https://www.douyin.com/video/' + awemeId, active: false });
-  } catch (e) {
-    return { ok: false, error: '无法打开抖音页面' };
-  }
-  const tabId = tab.id;
-  const deadline = Date.now() + 30000;
-  try {
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        const r = await chrome.tabs.sendMessage(tabId, { type: 'aweme:get', id: awemeId });
-        if (r && r.ok && r.aweme && /^https?:/i.test(r.aweme.video || '')) {
-          return { ok: true, aweme: r.aweme };
-        }
-      } catch (_) {}
+    try {
+      tab = await chrome.tabs.create({ url: 'https://www.douyin.com/video/' + awemeId, active: false });
+    } catch (e) {
+      return { ok: false, error: '无法打开抖音页面' };
     }
-    return { ok: false, error: '解析超时：抖音页面未能提供播放地址（请确认浏览器能正常打开抖音）' };
+    const tabId = tab.id;
+    const deadline = Date.now() + 30000;
+    try {
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const r = await chrome.tabs.sendMessage(tabId, { type: 'aweme:get', id: awemeId });
+          if (r && r.ok && r.aweme && /^https?:/i.test(r.aweme.video || '')) {
+            return { ok: true, aweme: r.aweme };
+          }
+        } catch (_) {}
+      }
+      awemeFailedAt.set(awemeId, Date.now());
+      return { ok: false, error: '解析超时：抖音页面未能提供播放地址（请确认浏览器能正常打开抖音）' };
+    } finally {
+      chrome.tabs.remove(tabId).catch(() => {});
+    }
   } finally {
-    chrome.tabs.remove(tabId).catch(() => {});
+    awemePending.delete(awemeId);
   }
 }
 
@@ -810,28 +826,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
           if (awemeId && /^\d{15,20}$/.test(awemeId)) {
             // 有作品 ID 但 feed 缓存还没播放地址：不往列表塞 kind=page 条目
-            // （那是把下载引向必败 yt-dlp 的元凶），改为后台开详情页异步补缓存
+            // （那是把下载引向必败 yt-dlp 的元凶），改为后台开详情页异步补缓存。
+            // 若本标签自己就是该作品的详情页（兜底打开的解析现场），不再触发兜底
+            const selfDetail = /douyin\.com\/video\/\d+/i.test(String(sender?.tab?.url || ''))
+              && String(sender?.tab?.url || '').includes('/video/' + awemeId);
             bindingByTab.set(tabId, { videoUrl: 'https://www.douyin.com/video/' + awemeId, audioUrl: '' });
             if (!prevEpoch || prevEpoch.src !== src) epochByTab.set(tabId, { src, since: Date.now() });
-            const reqSrc = src;
-            parsePageFallback(awemeId).then((fb) => {
-              if (!fb.ok) return;
-              if (epochByTab.get(tabId) && epochByTab.get(tabId).src !== reqSrc) return; // 已滑走
-              bindingByTab.set(tabId, { videoUrl: fb.aweme.video, audioUrl: fb.aweme.audio || '' });
-              currentSrcByTab.set(tabId, fb.aweme.video);
-              const rt = realTitleByTab.get(tabId);
-              const title = fb.aweme.desc || (rt && rt.title) || '';
-              addMedia(tabId, { url: fb.aweme.video, kind: 'mp4', pageTitle: title || undefined }).then(() => {
-                const m2 = mediaByTab.get(tabId);
-                if (m2) {
-                  const cur = m2.get(fb.aweme.video);
-                  if (cur && title) cur.pageTitle = title;
-                  persist();
-                }
-                updateBadge(tabId);
-                notifyTab(tabId, { type: 'media:changed' });
-              });
-            }).catch(() => {});
+            if (!selfDetail) {
+              const reqSrc = src;
+              parsePageFallback(awemeId).then((fb) => {
+                if (!fb.ok) return;
+                if (epochByTab.get(tabId) && epochByTab.get(tabId).src !== reqSrc) return; // 已滑走
+                bindingByTab.set(tabId, { videoUrl: fb.aweme.video, audioUrl: fb.aweme.audio || '' });
+                currentSrcByTab.set(tabId, fb.aweme.video);
+                const rt = realTitleByTab.get(tabId);
+                const title = fb.aweme.desc || (rt && rt.title) || '';
+                addMedia(tabId, { url: fb.aweme.video, kind: 'mp4', pageTitle: title || undefined }).then(() => {
+                  const m2 = mediaByTab.get(tabId);
+                  if (m2) {
+                    const cur = m2.get(fb.aweme.video);
+                    if (cur && title) cur.pageTitle = title;
+                    persist();
+                  }
+                  updateBadge(tabId);
+                  notifyTab(tabId, { type: 'media:changed' });
+                });
+              }).catch(() => {});
+            }
             return sendResponse({ ok: true });
           }
 
