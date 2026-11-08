@@ -530,6 +530,21 @@
     // 4.5) 站点特化标题（抖音等，优先在当前视频所在卡片里找）
     if (!t) t = siteTitle(video);
 
+    // 4.7) 页面主标题（h1）增强：h1 带集数且剧名与已取标题开头一致时优先用 h1。
+    // 很多影视站 document.title/og:title 里的「更新至第X集」是剧集最新进度，
+    // 不是当前播放集；页面 h1 才是当前集（如「FX战士久留美 第03集」）
+    try {
+      const h1 = document.querySelector('h1');
+      const h1t = h1 ? String(h1.textContent || '').replace(/\s+/g, ' ').trim() : '';
+      if (h1t && h1t.length <= 80 && /第\s*\d+\s*[集话期]|[Ss]\d{1,2}\s*[Ee]\d{1,3}/.test(h1t)) {
+        const base = (t || '').replace(/\s+/g, ' ').slice(0, 8);
+        if (!t || (base && h1t.startsWith(base))) {
+          const w = titleWorth(h1t, host);
+          if (w) t = w;
+        }
+      }
+    } catch (_) { /* 忽略 */ }
+
     // 5) document.title（顺便剥掉「- 站名」后缀）
     if (!t) {
       const dt = titleWorth(document.title, host);

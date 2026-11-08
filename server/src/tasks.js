@@ -456,15 +456,20 @@ function parseEpisode(title) {
     const show = t.replace(m[0], '').replace(/[《》「」【】\[\]#·\s]+/g, ' ').trim();
     return { show, season: 1, episode: parseInt(m[1], 10) };
   }
-  m = t.match(/第\s*([0-9]+|[零一二两三四五六七八九十百]+)\s*[集话期]/);
-  if (m) {
-    const before = t.slice(0, m.index);
+  // 「第X集」匹配要跳过「更新至第X集/更新到第X集/共X集/全X集」——那些说的是
+  // 剧集最新进度/总集数，不是当前集（如影视站 title「剧名 - 更新至第06集 …」）
+  const epRe = /第\s*([0-9]+|[零一二两三四五六七八九十百]+)\s*[集话期]/g;
+  let em;
+  while ((em = epRe.exec(t))) {
+    const pre = t.slice(Math.max(0, em.index - 3), em.index);
+    if (/[至到]$|共$|全$/.test(pre)) continue;
+    const before = t.slice(0, em.index);
     // 剧名：优先书名号内容，否则取「第X集」前的文字（去标签/标点）
     let show = '';
     const book = before.match(/《([^》]{1,40})》/);
     if (book) show = book[1].trim();
     else show = before.replace(/#\s*[^\s#]+/g, ' ').replace(/[【】\[\]「」·、，。！？!?:：;；'"‘’“”\s]+/g, ' ').trim();
-    const ep = cnToInt(m[1]);
+    const ep = cnToInt(em[1]);
     if (ep > 0 && show) return { show: show.slice(0, 60), season: 1, episode: ep };
   }
   return null;
