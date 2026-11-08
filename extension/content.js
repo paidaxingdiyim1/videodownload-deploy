@@ -687,6 +687,16 @@
       sendResponse({ ok: true, aweme: it || null });
       return false;
     }
+    // 抖音本地解析：按流 URL 反查所属作品（返回官方音轨 + 作品文案标题）
+    if (msg && msg.type === 'aweme:find') {
+      const u = String(msg.url || '');
+      let hit = null;
+      for (const it of state.awemeItems.values()) {
+        if (it && (it.video === u || it.audio === u)) { hit = it; break; }
+      }
+      sendResponse({ ok: true, aweme: hit });
+      return false;
+    }
     // 弹窗「刷新」：清空记录后页面立刻重新上报当前视频与标题
     if (msg && msg.type === 'media:resync') {
       broadcastTitle(true);
@@ -725,6 +735,16 @@
     // 只保留「粘贴分享链接解析」入口，交后端 yt-dlp 特化解析
     if (isShortVideoSite()) {
       send({ type: 'page:nosniff' });
+      // 不加按钮、不扫描；但仍广播页面标题（给嗅探/解析条目命名用）
+      const tb = () => {
+        const t = siteTitle() || titleWorth(stripSiteSuffix(document.title), location.hostname.replace(/^www\./, ''));
+        if (t) send({ type: 'page:title', title: t });
+      };
+      setTimeout(tb, 2000);
+      setTimeout(tb, 6000);
+      document.addEventListener('playing', (e) => {
+        if (e.target && e.target.tagName === 'VIDEO') setTimeout(tb, 400);
+      }, true);
       return;
     }
 

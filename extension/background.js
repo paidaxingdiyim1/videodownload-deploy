@@ -586,12 +586,33 @@ async function startDownload(msg, sender) {
   const cfg = await getConfig();
   const tabId = sender?.tab?.id ?? msg.tabId ?? -1;
   const pageUrl = sender?.tab?.url || msg.referer || '';
-  const kind = msg.kind || 'auto';
-  const cookies = await collectCookies(cookieDomainFor(msg.url, kind));
+  let kind = msg.kind || 'auto';
+
+  // 抖音：条目流 URL 反查所属作品（官方音轨 + 作品文案标题），命中则改下
+  // 「合并后的完整视频」——列表里点视频或音频都得到同一个成品
+  let awemeHit = null;
+  if (['video', 'mp4', 'audio'].includes(kind)) {
+    try {
+      const tabs = await chrome.tabs.query({});
+      const dt = tabs.find((t) => t.id != null && t.url && /douyin\.com/.test(t.url));
+      if (dt) {
+        const r = await chrome.tabs.sendMessage(dt.id, { type: 'aweme:find', url: msg.url });
+        if (r && r.ok && r.aweme && /^https?:/i.test(r.aweme.video || '')) awemeHit = r.aweme;
+      }
+    } catch (_) {}
+  }
+  if (awemeHit) {
+    msg = { ...msg, url: awemeHit.video, kind: 'mp4' };
+    kind = 'mp4';
+  }
+
+  const cookies = await collectCookies(awemeHit ? 'https://www.douyin.com/' : cookieDomainFor(msg.url, kind));
   const target = resolveTarget(msg.target, cfg);
 
   // 链接解析（kind=page）标题留空，交给 yt-dlp 解析真实标题；其它用页面标题兜底
-  const title = kind === 'page' ? (msg.title || '') : (msg.title || tabTitles.get(tabId) || '');
+  const title = kind === 'page'
+    ? (msg.title || '')
+    : ((awemeHit && awemeHit.desc) || msg.title || tabTitles.get(tabId) || '');
 
   const payload = {
     url: msg.url,
@@ -600,7 +621,7 @@ async function startDownload(msg, sender) {
     mode: msg.mode || cfg.mode || 'auto',
     quality: msg.quality || '',
     format: msg.format || '',
-    referer: msg.referer || pageUrl,
+    referer: awemeHit ? 'https://www.douyin.com/' : (msg.referer || pageUrl),
     userAgent: navigator.userAgent,
     cookies,
     customName: msg.customName || '',
@@ -610,6 +631,8 @@ async function startDownload(msg, sender) {
   // 已经绑定好的配对（blob 归属决策时连同音轨一起选定，最可靠），否则兜底匹配
   if (payload.kind === 'page') {
     payload.mode = 'ytdlp'; // 作品页地址必须走 yt-dlp 解析
+  } else if (awemeHit) {
+    payload.audioUrl = awemeHit.audio || ''; // 官方音轨，服务器 ffmpeg 合并
   } else if (payload.kind !== 'audio' && ['hls', 'dash', 'mp4', 'webm', 'flv', 'video', 'auto'].includes(payload.kind)) {
     const binding = bindingByTab.get(tabId);
     if (binding && binding.videoUrl === payload.url) {
