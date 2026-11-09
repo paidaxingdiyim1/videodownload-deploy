@@ -813,6 +813,67 @@
     }
   }
 
+  /** 是否 Cloudflare 强防护站（surrit 等）——这类站服务器下载慢，本机可用前端下载器 */
+  function isCfUrl(u) {
+    return /surrit\.com/i.test(String(u || ''));
+  }
+
+  /** 前端下载器：浏览器多线程下载分片 + 合并 + 保存到本机（用本机网络资源，绕过服务器慢链路） */
+  async function downloadLocal(url, filename, rec) {
+    try {
+      // 1) m3u8 + variant + 分片（主世界 fetch，天然过 Cloudflare）
+      let r = await wvdFetch(url, {});
+      if (!r.ok) throw new Error('获取播放列表失败：HTTP ' + r.status);
+      let text = new TextDecoder().decode(r.data);
+      let baseUrl = r.finalUrl || url;
+      let parsed = parseM3U8Text(text, baseUrl);
+      if (parsed.isMaster && parsed.variants.length) {
+        parsed.variants.sort((a, b) => b.bandwidth - a.bandwidth);
+        r = await wvdFetch(parsed.variants[0].url, {});
+        if (!r.ok) throw new Error('获取播放列表失败：HTTP ' + r.status);
+        text = new TextDecoder().decode(r.data);
+        baseUrl = r.finalUrl || parsed.variants[0].url;
+        parsed = parseM3U8Text(text, baseUrl);
+      }
+      const segs = parsed.segments;
+      if (!segs.length) throw new Error('播放列表里没有分片');
+
+      const ext = /\.(m4s|mp4)(\?|$)/i.test(segs[0]) ? 'mp4' : 'ts';
+      const fname = (filename || '视频') + '.' + ext;
+
+      // 2) 并发下载分片（每批 6 个），累积到 Blob 数组
+      const parts = new Array(segs.length);
+      const BATCH = 6;
+      for (let i = 0; i < segs.length; i += BATCH) {
+        const batch = segs.slice(i, i + BATCH);
+        const datas = await Promise.all(batch.map((u) => wvdFetch(u, {})));
+        for (let j = 0; j < datas.length; j++) {
+          if (!datas[j].ok) throw new Error('分片 ' + (i + j + 1) + ' 下载失败：HTTP ' + datas[j].status);
+          parts[i + j] = datas[j].data;
+        }
+        if (rec) setBtnState(rec, 'running', Math.round((i + batch.length) * 100 / segs.length) + '%', '本机下载中');
+      }
+
+      // 3) 合并 + 触发浏览器下载到本机
+      const blob = new Blob(parts, { type: ext === 'ts' ? 'video/mp2t' : 'video/mp4' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
+      return { ok: true, fileName: fname };
+    } catch (e) {
+      let m = String(e && e.message || e);
+      if (/Failed to fetch|NetworkError|TypeError|Load failed/i.test(m)) {
+        m = '浏览器请求被拦截（可能 CORS/网络限制）：' + m;
+      }
+      return { ok: false, error: m };
+    }
+  }
+
   /** 抖音悬浮「解析」：按作品 ID 解析官方播放地址（含音轨+文案），成功后按钮变「下载」 */
   async function parseFor(video, rec) {
     if (rec) setBtnState(rec, 'loading', '解析中…', '正在解析播放地址');
@@ -867,11 +928,27 @@
       return; // 用户取消
     }
     const title = customName || autoTitle;
+    const dlUrl = aweme ? aweme.video : pick.url;
+    const dlKind = aweme ? 'mp4' : (pick.kind || 'auto');
+
+    // Cloudflare 强防护站 + 保存到本机：用前端下载器（浏览器资源，绕过服务器慢链路）
+    if (target === 'local' && isCfUrl(dlUrl)) {
+      if (rec) setBtnState(rec, 'running', '0%', '本机下载中（浏览器多线程）');
+      const lr = await downloadLocal(dlUrl, title, rec);
+      if (lr.ok) {
+        if (rec) setBtnState(rec, 'done', '已保存', '已保存到本机：' + lr.fileName);
+        setTimeout(() => { if (rec && rec.btn.isConnected) setBtnState(rec, 'idle', '下载'); }, 5000);
+      } else {
+        if (rec) setBtnState(rec, 'error', '失败', lr.error || '本机下载失败');
+        setTimeout(() => { if (rec && rec.btn.isConnected) setBtnState(rec, 'idle', '下载'); }, 5200);
+      }
+      return;
+    }
 
     const result = await send({
       type: 'download',
-      url: aweme ? aweme.video : pick.url,
-      kind: aweme ? 'mp4' : (pick.kind || 'auto'),
+      url: dlUrl,
+      kind: dlKind,
       title,
       customName: customName || '',
       // 抖音：带作品 ID，后台未命中时自动补缓存；普通站点 activeAwemeId 为空
