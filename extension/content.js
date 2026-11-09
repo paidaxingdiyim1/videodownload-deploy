@@ -829,18 +829,31 @@
       const ext = parsed.ext || 'ts';
       const fname = (filename || '视频') + '.' + ext;
 
-      // 2) 前端用浏览器（真实 Chrome 指纹，能过 Cloudflare 分片请求）并发下载分片
+      // 2) 前端用主世界 fetch（与页面 hls.js 完全同上下文，能过 Cloudflare/CORS）
+      //    并发下载分片。注意：content script 在隔离世界直接 fetch 会被 Cloudflare
+      //    单独拦截（diag.log 实测：Failed to fetch），必须走 inject.js 的主世界桥接
       const parts = new Array(segs.length);
       const BATCH = 6;
       for (let i = 0; i < segs.length; i += BATCH) {
         const batch = segs.slice(i, i + BATCH);
         const datas = await Promise.all(batch.map(async (u) => {
           try {
-            const res = await fetch(u, { credentials: 'include' });
-            if (res.ok) return { ok: true, data: await res.arrayBuffer() };
-            return { ok: false, status: res.status };
+            const r = await wvdFetch(u, {});
+            if (r.ok) return { ok: true, data: r.data };
+            return { ok: false, status: r.status };
           } catch (e) {
-            return { ok: false, error: String(e && e.message || e) };
+            const wm = String(e && e.message || e);
+            if (/超时/.test(wm)) {
+              // 主世界钩子未生效（页面没刷新）：回退 content 直连，能拿回真实错误
+              try {
+                const res = await fetch(u, { credentials: 'include' });
+                if (res.ok) return { ok: true, data: await res.arrayBuffer() };
+                return { ok: false, status: res.status };
+              } catch (e2) {
+                return { ok: false, error: '主世界钩子未响应且直连失败：' + String(e2 && e2.message || e2) };
+              }
+            }
+            return { ok: false, error: wm };
           }
         }));
         for (let j = 0; j < datas.length; j++) {
