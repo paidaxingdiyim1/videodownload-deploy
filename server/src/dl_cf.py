@@ -124,7 +124,7 @@ def main():
                 print('PROGRESS %d' % int(done[0] * 100 / total), flush=True)
         return p
 
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    with ThreadPoolExecutor(max_workers=12) as ex:
         list(ex.map(fetch, enumerate(segs)))
 
     # 5) 合成：优先 ffmpeg concat 转 mp4；失败则字节直拼存 .ts（都能播）
