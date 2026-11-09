@@ -966,7 +966,7 @@
         if (rec) setBtnState(rec, 'done', '已保存', '已保存到本机：' + lr.fileName);
         setTimeout(() => { if (rec && rec.btn.isConnected) setBtnState(rec, 'idle', '下载'); }, 5000);
       } else {
-        send({ type: 'browser-notify', title: '本机下载失败', message: lr.error || '未知错误' });
+        send({ type: 'browser-notify', title: '本机下载失败', message: lr.error || '未知错误', diag: true });
         if (rec) setBtnState(rec, 'error', '失败', lr.error || '本机下载失败');
         setTimeout(() => { if (rec && rec.btn.isConnected) setBtnState(rec, 'idle', '下载'); }, 5200);
       }

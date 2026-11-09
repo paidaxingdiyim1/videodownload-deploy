@@ -12,7 +12,7 @@ const ytdlp = require('./ytdlp');
 const util = require('./util');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.10';
+const VERSION = '1.5.11';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -272,6 +272,20 @@ const server = http.createServer(async (req, res) => {
         active: tasks.active,
         queued: tasks.queue.length,
       }, cors);
+    }
+
+    /* ---- 前端诊断上报：前端下载失败时把错误写到服务器日志，便于排查 ---- */
+    if (pathname === '/api/diag' && req.method === 'POST') {
+      let body = {};
+      try { body = await readBody(req); } catch (_) {}
+      const msg = String(body.message || '').slice(0, 500);
+      try {
+        const logDir = path.join(config.ROOT, 'logs');
+        fs.mkdirSync(logDir, { recursive: true });
+        fs.appendFileSync(path.join(logDir, 'diag.log'),
+          `[${new Date().toLocaleString('zh-CN', { hour12: false })}] ${msg}\n`);
+      } catch (_) {}
+      return send(res, 200, { ok: true }, cors);
     }
 
     /* ---- 配对：扩展首次拿 token ---- */

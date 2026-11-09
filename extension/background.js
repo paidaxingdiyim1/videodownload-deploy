@@ -1064,6 +1064,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             title: msg.title || '下载提示',
             message: String(msg.message || ''),
           }).catch(() => {});
+          // 同时上报服务器日志，便于排查前端下载失败原因
+          if (msg.diag) {
+            api('/api/diag', { method: 'POST', body: { message: msg.message }, timeout: 5000, target: 'server' }).catch(() => {});
+          }
           return sendResponse({ ok: true });
         }
         case 'parse:aweme': {
