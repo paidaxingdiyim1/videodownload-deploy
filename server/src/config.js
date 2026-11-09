@@ -47,6 +47,8 @@ const defaults = {
   concurrency: 2,
   /** 单个 HLS 任务的分片并发数 */
   segmentConcurrency: 6,
+  /** Cloudflare 站（cfdl 引擎）分片并发数。本机网络强可调高（实测本机 32 线程 ~20MB/s，服务器 12 线程 ~4.8MB/s） */
+  cfWorkers: 12,
   /** 命名模板，支持 {title} {site} {date} {quality} {index} */
   namingTemplate: '{title}',
   /** 按站点分文件夹保存：downloads/<域名>/<文件> */

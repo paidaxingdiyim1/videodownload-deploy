@@ -47,6 +47,7 @@ def main():
     ap.add_argument('--referer', default='')
     ap.add_argument('--out', required=True)
     ap.add_argument('--ffmpeg', default='')
+    ap.add_argument('--workers', type=int, default=12)
     args = ap.parse_args()
 
     origin = ''
@@ -124,7 +125,7 @@ def main():
                 print('PROGRESS %d' % int(done[0] * 100 / total), flush=True)
         return p
 
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    with ThreadPoolExecutor(max_workers=args.workers) as ex:
         list(ex.map(fetch, enumerate(segs)))
 
     # 5) 合成：优先 ffmpeg concat 转 mp4；失败则字节直拼存 .ts（都能播）

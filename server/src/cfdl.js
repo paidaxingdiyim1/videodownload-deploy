@@ -10,7 +10,7 @@ function download(task, ctx) {
     const py = config.resolvePython();
     const script = path.join(config.ROOT, 'server', 'src', 'dl_cf.py');
     const tmpOut = ctx.tmpFile + '.cf.mp4';
-    const args = [script, '--url', task.url, '--referer', task.referer || '', '--out', tmpOut];
+    const args = [script, '--url', task.url, '--referer', task.referer || '', '--out', tmpOut, '--workers', String((ctx.config && ctx.config.cfWorkers) || 12)];
 
     let settled = false;
     const child = execFile(py, args, { timeout: 0, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
