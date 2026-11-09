@@ -945,21 +945,9 @@
     const dlUrl = aweme ? aweme.video : pick.url;
     const dlKind = aweme ? 'mp4' : (pick.kind || 'auto');
 
-    // Cloudflare 强防护站 + 保存到本机：用前端下载器（浏览器资源，绕过服务器慢链路）
-    if (target === 'local' && isCfUrl(dlUrl)) {
-      if (rec) setBtnState(rec, 'running', '0%', '本机下载中（浏览器多线程）');
-      const lr = await downloadLocal(dlUrl, title, rec);
-      if (lr.ok) {
-        if (rec) setBtnState(rec, 'done', '已保存', '已保存到本机：' + lr.fileName);
-        setTimeout(() => { if (rec && rec.btn.isConnected) setBtnState(rec, 'idle', '下载'); }, 5000);
-      } else {
-        send({ type: 'browser-notify', title: '本机下载失败', message: lr.error || '未知错误', diag: true });
-        if (rec) setBtnState(rec, 'error', '失败', lr.error || '本机下载失败');
-        setTimeout(() => { if (rec && rec.btn.isConnected) setBtnState(rec, 'idle', '下载'); }, 5200);
-      }
-      return;
-    }
-
+    // 保存到本机时：本机后端（127.0.0.1:8765）内置 curl_cffi + cfdl 引擎，能过
+    // Cloudflare 且用本机网络下载（快、出 mp4）。Cloudflare 站无需再走浏览器 fetch
+    // 前端下载器（那个受隔离世界 CORS 限制，一直失败），统一交给本机后端下载
     const result = await send({
       type: 'download',
       url: dlUrl,

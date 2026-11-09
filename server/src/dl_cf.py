@@ -131,7 +131,14 @@ def main():
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     is_ts = not re.search(r'\.(m4s|mp4)(\?|$)', segs[0], re.I)
 
-    ffmpeg = args.ffmpeg or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bin', 'ffmpeg')
+    ffmpeg = args.ffmpeg
+    if not ffmpeg:
+        _bin = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bin')
+        for _name in ('ffmpeg.exe', 'ffmpeg'):
+            _p = os.path.join(_bin, _name)
+            if os.path.isfile(_p):
+                ffmpeg = _p
+                break
     if os.path.isfile(ffmpeg):
         listfile = os.path.join(tmpdir, 'list.txt')
         with open(listfile, 'w', encoding='utf-8') as f:

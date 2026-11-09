@@ -12,7 +12,7 @@ const ytdlp = require('./ytdlp');
 const util = require('./util');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.12';
+const VERSION = '1.5.13';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -293,7 +293,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (!body.url) return send(res, 400, { ok: false, error: '缺少 url' }, cors);
       try {
-        const py = path.join(config.ROOT, 'server', 'venv', 'bin', 'python');
+        const py = config.resolvePython();
         const script = path.join(config.ROOT, 'server', 'src', 'cf_parse.py');
         const out = await new Promise((resolve, reject) => {
           execFile(py, [script, '--url', body.url, '--referer', body.referer || ''], { timeout: 90000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {

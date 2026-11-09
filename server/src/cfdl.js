@@ -7,7 +7,7 @@ const config = require('./config');
 
 function download(task, ctx) {
   return new Promise((resolve, reject) => {
-    const py = path.join(config.ROOT, 'server', 'venv', 'bin', 'python');
+    const py = config.resolvePython();
     const script = path.join(config.ROOT, 'server', 'src', 'dl_cf.py');
     const tmpOut = ctx.tmpFile + '.cf.mp4';
     const args = [script, '--url', task.url, '--referer', task.referer || '', '--out', tmpOut];

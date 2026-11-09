@@ -120,4 +120,16 @@ function isLanBind(host) {
   return true;
 }
 
-module.exports = { load, save, update, ROOT, SEA_MODE, CONFIG_PATH, BIN_DIR, defaults, isLanBind };
+/** 找到可用的 Python 解释器（优先项目 venv，兼容 Windows/Linux；兜底系统命令） */
+function resolvePython() {
+  const venv = path.join(ROOT, 'server', 'venv');
+  const cands = process.platform === 'win32'
+    ? [path.join(venv, 'Scripts', 'python.exe'), path.join(venv, 'bin', 'python.exe'), path.join(venv, 'bin', 'python')]
+    : [path.join(venv, 'bin', 'python')];
+  for (const p of cands) {
+    try { if (fs.existsSync(p)) return p; } catch (_) {}
+  }
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+module.exports = { load, save, update, ROOT, SEA_MODE, CONFIG_PATH, BIN_DIR, defaults, isLanBind, resolvePython };
