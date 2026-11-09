@@ -867,7 +867,9 @@
       return { ok: true, fileName: fname };
     } catch (e) {
       let m = String(e && e.message || e);
-      if (/Failed to fetch|NetworkError|TypeError|Load failed/i.test(m)) {
+      if (/主世界 fetch 超时/.test(m)) {
+        m = '页面钩子未响应：请刷新本页后重试（inject 钩子需页面重载才生效）';
+      } else if (/Failed to fetch|NetworkError|TypeError|Load failed/i.test(m)) {
         m = '浏览器请求被拦截（可能 CORS/网络限制）：' + m;
       }
       return { ok: false, error: m };
@@ -939,6 +941,7 @@
         if (rec) setBtnState(rec, 'done', '已保存', '已保存到本机：' + lr.fileName);
         setTimeout(() => { if (rec && rec.btn.isConnected) setBtnState(rec, 'idle', '下载'); }, 5000);
       } else {
+        send({ type: 'browser-notify', title: '本机下载失败', message: lr.error || '未知错误' });
         if (rec) setBtnState(rec, 'error', '失败', lr.error || '本机下载失败');
         setTimeout(() => { if (rec && rec.btn.isConnected) setBtnState(rec, 'idle', '下载'); }, 5200);
       }
