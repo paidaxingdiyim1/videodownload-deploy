@@ -821,15 +821,27 @@
   /** 前端下载器：浏览器多线程下载分片 + 合并 + 保存到本机（用本机网络资源，绕过服务器慢链路） */
   async function downloadLocal(url, filename, rec) {
     try {
-      // 1) m3u8 + variant + 分片（主世界 fetch，天然过 Cloudflare）
-      let r = await wvdFetch(url, {});
+      // 拉取帮助：优先 content 直接 fetch（真实浏览器指纹，能过 Cloudflare）；
+      // 失败（CORS/403/网络）再回退主世界 fetch 桥接（inject.js，与 hls.js 同上下文）
+      const fetchBuf = async (u) => {
+        try {
+          const res = await fetch(u, { credentials: 'include' });
+          if (res.ok) {
+            return { ok: true, status: res.status, finalUrl: res.url || u, data: await res.arrayBuffer() };
+          }
+        } catch (_) { /* 落到回退 */ }
+        return await wvdFetch(u, {});
+      };
+
+      // 1) m3u8 + variant + 分片
+      let r = await fetchBuf(url);
       if (!r.ok) throw new Error('获取播放列表失败：HTTP ' + r.status);
       let text = new TextDecoder().decode(r.data);
       let baseUrl = r.finalUrl || url;
       let parsed = parseM3U8Text(text, baseUrl);
       if (parsed.isMaster && parsed.variants.length) {
         parsed.variants.sort((a, b) => b.bandwidth - a.bandwidth);
-        r = await wvdFetch(parsed.variants[0].url, {});
+        r = await fetchBuf(parsed.variants[0].url);
         if (!r.ok) throw new Error('获取播放列表失败：HTTP ' + r.status);
         text = new TextDecoder().decode(r.data);
         baseUrl = r.finalUrl || parsed.variants[0].url;
@@ -846,7 +858,7 @@
       const BATCH = 6;
       for (let i = 0; i < segs.length; i += BATCH) {
         const batch = segs.slice(i, i + BATCH);
-        const datas = await Promise.all(batch.map((u) => wvdFetch(u, {})));
+        const datas = await Promise.all(batch.map((u) => fetchBuf(u)));
         for (let j = 0; j < datas.length; j++) {
           if (!datas[j].ok) throw new Error('分片 ' + (i + j + 1) + ' 下载失败：HTTP ' + datas[j].status);
           parts[i + j] = datas[j].data;
