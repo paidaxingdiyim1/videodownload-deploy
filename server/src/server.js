@@ -12,7 +12,7 @@ const ytdlp = require('./ytdlp');
 const util = require('./util');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.11';
+const VERSION = '1.5.12';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -286,6 +286,26 @@ const server = http.createServer(async (req, res) => {
           `[${new Date().toLocaleString('zh-CN', { hour12: false })}] ${msg}\n`);
       } catch (_) {}
       return send(res, 200, { ok: true }, cors);
+    }
+
+    /* ---- 解析 Cloudflare 保护的 m3u8，返回分片列表（前端下载器「后端过验证+前端下分片」用） ---- */
+    if (pathname === '/api/cf-m3u8' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (!body.url) return send(res, 400, { ok: false, error: '缺少 url' }, cors);
+      try {
+        const py = path.join(config.ROOT, 'server', 'venv', 'bin', 'python');
+        const script = path.join(config.ROOT, 'server', 'src', 'cf_parse.py');
+        const out = await new Promise((resolve, reject) => {
+          execFile(py, [script, '--url', body.url, '--referer', body.referer || ''], { timeout: 90000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+            if (err) return reject(new Error(String(stderr || stdout || err.message).trim()));
+            try { resolve(JSON.parse(String(stdout).trim())); }
+            catch (e) { reject(new Error('解析输出失败：' + String(stdout).slice(0, 200))); }
+          });
+        });
+        return send(res, 200, out, cors);
+      } catch (e) {
+        return send(res, 200, { ok: false, error: e.message }, cors);
+      }
     }
 
     /* ---- 配对：扩展首次拿 token ---- */

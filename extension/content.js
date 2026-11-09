@@ -818,62 +818,36 @@
     return /surrit\.com/i.test(String(u || ''));
   }
 
-  /** 前端下载器：浏览器多线程下载分片 + 合并 + 保存到本机（用本机网络资源，绕过服务器慢链路） */
+  /** 前端下载器：后端过 Cloudflare 拿分片列表，前端用浏览器下载分片 + 合片 + 保存本机 */
   async function downloadLocal(url, filename, rec) {
     try {
-      // 拉取帮助：优先 content 直接 fetch（真实浏览器指纹）；失败回退主世界桥接。
-      // 失败时把「content fetch 的具体结果 + 主世界结果」都带上，便于定位
-      const fetchBuf = async (u) => {
-        let contentErr = '';
-        try {
-          const res = await fetch(u, { credentials: 'include' });
-          if (res.ok) {
-            return { ok: true, status: res.status, finalUrl: res.url || u, data: await res.arrayBuffer() };
-          }
-          contentErr = 'HTTP ' + res.status;
-        } catch (e) {
-          contentErr = String(e && e.message || e);
-        }
-        // 回退主世界 fetch 桥接
-        try {
-          return await wvdFetch(u, {});
-        } catch (e2) {
-          const wm = String(e2 && e2.message || e2);
-          if (/超时/.test(wm)) {
-            throw new Error('浏览器直连失败(' + contentErr + ')，且页面钩子未响应——请刷新页面后重试');
-          }
-          throw new Error('浏览器直连失败(' + contentErr + ')，主世界也失败(' + wm + ')');
-        }
-      };
-
-      // 1) m3u8 + variant + 分片
-      let r = await fetchBuf(url);
-      if (!r.ok) throw new Error('获取播放列表失败：HTTP ' + r.status);
-      let text = new TextDecoder().decode(r.data);
-      let baseUrl = r.finalUrl || url;
-      let parsed = parseM3U8Text(text, baseUrl);
-      if (parsed.isMaster && parsed.variants.length) {
-        parsed.variants.sort((a, b) => b.bandwidth - a.bandwidth);
-        r = await fetchBuf(parsed.variants[0].url);
-        if (!r.ok) throw new Error('获取播放列表失败：HTTP ' + r.status);
-        text = new TextDecoder().decode(r.data);
-        baseUrl = r.finalUrl || parsed.variants[0].url;
-        parsed = parseM3U8Text(text, baseUrl);
-      }
-      const segs = parsed.segments;
-      if (!segs.length) throw new Error('播放列表里没有分片');
-
-      const ext = /\.(m4s|mp4)(\?|$)/i.test(segs[0]) ? 'mp4' : 'ts';
+      // 1) 后端 curl_cffi 过 Cloudflare，拿到最高清 variant 的分片列表
+      const parsed = await send({ type: 'cf-m3u8', url, referer: location.href });
+      if (!parsed || !parsed.ok) throw new Error((parsed && parsed.error) || '后端解析 m3u8 失败');
+      const segs = parsed.segments || [];
+      if (!segs.length) throw new Error('分片列表为空');
+      const ext = parsed.ext || 'ts';
       const fname = (filename || '视频') + '.' + ext;
 
-      // 2) 并发下载分片（每批 6 个），累积到 Blob 数组
+      // 2) 前端用浏览器（真实 Chrome 指纹，能过 Cloudflare 分片请求）并发下载分片
       const parts = new Array(segs.length);
       const BATCH = 6;
       for (let i = 0; i < segs.length; i += BATCH) {
         const batch = segs.slice(i, i + BATCH);
-        const datas = await Promise.all(batch.map((u) => fetchBuf(u)));
+        const datas = await Promise.all(batch.map(async (u) => {
+          try {
+            const res = await fetch(u, { credentials: 'include' });
+            if (res.ok) return { ok: true, data: await res.arrayBuffer() };
+            return { ok: false, status: res.status };
+          } catch (e) {
+            return { ok: false, error: String(e && e.message || e) };
+          }
+        }));
         for (let j = 0; j < datas.length; j++) {
-          if (!datas[j].ok) throw new Error('分片 ' + (i + j + 1) + ' 下载失败：HTTP ' + datas[j].status);
+          if (!datas[j].ok) {
+            const why = datas[j].status ? ('HTTP ' + datas[j].status) : (datas[j].error || '网络错误');
+            throw new Error('分片 ' + (i + j + 1) + ' 下载失败：' + why);
+          }
           parts[i + j] = datas[j].data;
         }
         if (rec) setBtnState(rec, 'running', Math.round((i + batch.length) * 100 / segs.length) + '%', '本机下载中');

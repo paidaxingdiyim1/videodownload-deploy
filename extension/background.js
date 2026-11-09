@@ -1070,6 +1070,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
           return sendResponse({ ok: true });
         }
+        case 'cf-m3u8': {
+          // 前端下载器「后端过验证 + 前端下分片」：后端 curl_cffi 过 Cloudflare 拿分片列表
+          try {
+            const r = await api('/api/cf-m3u8', { method: 'POST', body: { url: msg.url, referer: msg.referer || '' }, timeout: 90000, target: 'server' });
+            return sendResponse(r);
+          } catch (e) {
+            return sendResponse({ ok: false, error: String(e && e.message || e) });
+          }
+        }
         case 'parse:aweme': {
           // 悬浮「解析」按钮：按作品 ID / 流 URL 解析出官方播放地址（含音轨+文案）。
           // 若后台兜底已在解析同一作品，这里共享等待（不秒拒）。
