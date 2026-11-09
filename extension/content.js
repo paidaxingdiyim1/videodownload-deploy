@@ -821,16 +821,29 @@
   /** 前端下载器：浏览器多线程下载分片 + 合并 + 保存到本机（用本机网络资源，绕过服务器慢链路） */
   async function downloadLocal(url, filename, rec) {
     try {
-      // 拉取帮助：优先 content 直接 fetch（真实浏览器指纹，能过 Cloudflare）；
-      // 失败（CORS/403/网络）再回退主世界 fetch 桥接（inject.js，与 hls.js 同上下文）
+      // 拉取帮助：优先 content 直接 fetch（真实浏览器指纹）；失败回退主世界桥接。
+      // 失败时把「content fetch 的具体结果 + 主世界结果」都带上，便于定位
       const fetchBuf = async (u) => {
+        let contentErr = '';
         try {
           const res = await fetch(u, { credentials: 'include' });
           if (res.ok) {
             return { ok: true, status: res.status, finalUrl: res.url || u, data: await res.arrayBuffer() };
           }
-        } catch (_) { /* 落到回退 */ }
-        return await wvdFetch(u, {});
+          contentErr = 'HTTP ' + res.status;
+        } catch (e) {
+          contentErr = String(e && e.message || e);
+        }
+        // 回退主世界 fetch 桥接
+        try {
+          return await wvdFetch(u, {});
+        } catch (e2) {
+          const wm = String(e2 && e2.message || e2);
+          if (/超时/.test(wm)) {
+            throw new Error('浏览器直连失败(' + contentErr + ')，且页面钩子未响应——请刷新页面后重试');
+          }
+          throw new Error('浏览器直连失败(' + contentErr + ')，主世界也失败(' + wm + ')');
+        }
       };
 
       // 1) m3u8 + variant + 分片
