@@ -13,7 +13,7 @@ const util = require('./util');
 const cfdl = require('./cfdl');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.17';
+const VERSION = '1.5.18';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -966,6 +966,9 @@ const BM_TEMPLATE = String.raw`javascript:(function(){var h=location.hostname,c=
 /** iOS 安装引导页：把书签代码直接呈现出来，复制即用 */
 function iosGuidePage() {
   const bm = BM_TEMPLATE.replace('__TOKEN__', cfg.token);
+  let scJs = '';
+  try { scJs = fs.readFileSync(path.join(config.ROOT, 'ios', 'shortcut-web-js.js'), 'utf8'); } catch (_) {}
+  const escHtml = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return `<!doctype html>
 <html lang="zh-CN"><head>
 <meta charset="utf-8">
@@ -1012,8 +1015,16 @@ function iosGuidePage() {
   </div>
 
   <div class="card">
-    <h2>方案 B · 快捷指令（体验最好，需签名）</h2>
-    <p class="hint">iOS 15+ 的 <code>.shortcut</code> 文件必须经 Apple 签名才能导入，而签名工具只在 macOS 上有（Windows 无法生成）。有 Mac 的话可以用 <code>shortcuts sign</code> 签名后隔空投送；没有 Mac 就用手动配置（见 <code>ios/README.md</code>，4 步）。</p>
+    <h2>方案 B · 快捷指令（3 个动作，约 3 分钟）</h2>
+    <ol class="steps">
+      <li><b>设置 → 快捷指令 → 打开「允许运行脚本」</b>（iOS 17/18 在「设置 → 快捷指令 → 高级」里）</li>
+      <li>打开「快捷指令」App → 右上角 <b>+</b> → 添加操作 → 搜索 <b>「在网页上运行 JavaScript」</b> → 把下面这段脚本<b>全部粘贴</b>进去</li>
+      <li>再添加操作 → 搜索 <b>「获取 URL 内容」</b> → URL 那一栏点一下，选键盘上方的<b>「JavaScript 在网页上运行」的结果</b>（方法保持 GET）</li>
+      <li>点快捷指令名字改成 <b>视频下载</b>；点 <b>ⓘ</b> → 打开 <b>「在分享表单中显示」</b> → 接收类型勾 <b>URL</b> 和 <b>文本</b></li>
+    </ol>
+    <textarea id="sc" readonly spellcheck="false">${escHtml(scJs)}</textarea>
+    <button class="btn" type="button" onclick="cp2()">复制脚本</button>
+    <div class="warn">iOS 15+ 的 .shortcut 文件必须 Apple 签名才能导入（签名工具只在 macOS 上），所以只能按上面 3 步手动搭一次。</div>
   </div>
 
   <div class="card">
@@ -1029,12 +1040,13 @@ function iosGuidePage() {
 <div class="toast" id="toast"></div>
 <script>
 function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(function(){t.classList.remove('show');},2200);}
-function cp(){
-  var t=document.getElementById('bm');
+function copyEl(id, okMsg){
+  var t=document.getElementById(id);
+  if(!t) return;
   t.focus();t.select();
   try{t.setSelectionRange(0,999999);}catch(e){}
   var v=t.value;
-  function ok(){toast('已复制，去 书签 → 编辑 里粘贴');}
+  function ok(){toast(okMsg);}
   function fail(){toast('自动复制失败，请长按代码框手动全选复制');}
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(v).then(ok,fail);
@@ -1042,6 +1054,8 @@ function cp(){
     try{document.execCommand('copy')?ok():fail();}catch(e){fail();}
   }
 }
+function cp(){copyEl('bm','已复制，去 书签 → 编辑 里粘贴');}
+function cp2(){copyEl('sc','已复制，去「在网页上运行 JavaScript」里粘贴');}
 </script>
 </body></html>`;
 }
