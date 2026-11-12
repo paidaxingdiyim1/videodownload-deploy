@@ -42,8 +42,10 @@
 
   /* 1) 页面已加载的资源：hls.js 请求过的 m3u8、播放器拉过的 mp4 都在这里
         （跨域资源的 timing 受限，但 URL 一定可见） */
+  var resCount = 0;
   try {
     var es = performance.getEntriesByType('resource') || [];
+    resCount = es.length;
     for (var i = 0; i < es.length; i++) {
       var n = es[i].name || '';
       if (/\.m3u8(\?|$)/i.test(n)) add(n, 'm3u8');
@@ -57,6 +59,15 @@
     for (var j = 0; j < vs.length; j++) {
       var s = vs[j].currentSrc || vs[j].src || '';
       if (/^https?:/i.test(s)) add(s, 'video');
+    }
+  } catch (e) {}
+
+  /* 2.5) 页面 HTML / 内联脚本里的 m3u8、mp4（有些站把地址直接写在源码里） */
+  try {
+    var html = document.documentElement.innerHTML || '';
+    if (html.length < 3 * 1024 * 1024) {
+      var hm, hre = /https?:\/\/[^"'\s<>\\)]{8,300}\.(?:m3u8|mp4)[^"'\s<>\\)]{0,200}/gi;
+      while ((hm = hre.exec(html))) add(hm[0], 'html');
     }
   } catch (e) {}
 
@@ -121,8 +132,12 @@
 
   var best = cands.length ? toMaster(cands[0].u) : '';
   if (!best) {
-    try { alert('没找到视频直链：先让视频播放 2~3 秒再运行'); } catch (e) {}
-    return done('');
+    // 找不到直链：返回一个「提示页」而不是空值，避免快捷指令报「无效 URL」，
+    // 提示页里会带上诊断信息（域名 / 资源数 / 候选数 / video 数）
+    var vcount = 0;
+    try { vcount = document.querySelectorAll('video').length; } catch (e) {}
+    var diag = 'h=' + encodeURIComponent(host) + '&r=' + resCount + '&c=' + cands.length + '&v=' + vcount;
+    return done(SERVER + '/api/ios-hint?token=' + TOKEN + '&' + diag);
   }
   // 返回「提交下载」的完整 URL —— 快捷指令只需接「获取 URL 内容」一步
   return done(SERVER + '/api/quick-download?token=' + TOKEN + '&url=' + encodeURIComponent(best));

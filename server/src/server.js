@@ -13,7 +13,7 @@ const util = require('./util');
 const cfdl = require('./cfdl');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.19';
+const VERSION = '1.5.20';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -339,6 +339,44 @@ const server = http.createServer(async (req, res) => {
         referer: url.searchParams.get('referer') || '',
       });
       return send(res, 200, { ok: true, task: snap }, cors);
+    }
+
+    /* ---- iOS 快捷指令：没找到直链时的提示页（带诊断信息，避免「无效 URL」）---- */
+    if (pathname === '/api/ios-hint') {
+      const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const h = esc(url.searchParams.get('h') || '未知');
+      const r = esc(url.searchParams.get('r') || '0');
+      const c = esc(url.searchParams.get('c') || '0');
+      const v = esc(url.searchParams.get('v') || '0');
+      const isMissav = /missav/i.test(h);
+      const isHanime = /hanime/i.test(h);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(`<!doctype html><html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>没找到直链</title>
+<style>
+ body{margin:0;font:15px/1.65 -apple-system,"PingFang SC",sans-serif;background:#f6f7f9;color:#1a1d21;padding:22px}
+ .card{background:#fff;border-radius:14px;padding:18px 18px 16px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+ h1{font-size:18px;margin:0 0 10px;color:#b42318}
+ p{margin:10px 0}
+ b{color:#2b6cff}
+ table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+ td{padding:7px 4px;border-bottom:1px solid #f0f1f3;word-break:break-all}
+ td:first-child{color:#6b7280;width:42%}
+ .tip{background:#f6f8ff;border:1px solid #e0e7ff;color:#374151;padding:10px 12px;border-radius:9px;font-size:13px}
+</style></head><body><div class="card">
+<h1>没找到视频直链</h1>
+<p>请在视频页让视频 <b>播放 2~3 秒</b> 后再运行本快捷指令——暂停或还没加载时，页面里没有可用的流地址。</p>
+<table>
+ <tr><td>页面域名</td><td>${h}</td></tr>
+ <tr><td>已加载资源</td><td>${r} 个</td></tr>
+ <tr><td>候选直链</td><td>${c} 个</td></tr>
+ <tr><td>video 元素</td><td>${v} 个</td></tr>
+</table>
+${isMissav ? '<p class="tip">missav：确认视频正在播放（不是暂停/加载中），播放器会去 surrit 拉 m3u8。</p>' : ''}
+${isHanime ? '<p class="tip">hanime1：确认页面已完整加载，且页面上能看到「下载」入口。</p>' : ''}
+<p class="tip">把这一页截图发我，我能判断卡在哪一步。</p>
+</div></body></html>`);
     }
 
     /* ---- 新建下载 ---- */
