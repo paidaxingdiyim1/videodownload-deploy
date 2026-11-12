@@ -13,7 +13,7 @@ const util = require('./util');
 const cfdl = require('./cfdl');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.22';
+const VERSION = '1.5.23';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -1186,14 +1186,17 @@ function iosGuidePage() {
         ② <b>「在网页上运行 JavaScript」</b> → 把下面这段脚本<b>全部粘贴</b>进去<br>
         <span class="hint">认准动作名：<b>在网页上运行 JavaScript</b>（蓝色 Safari 指南针图标，在操作列表「网页」分组最下面）。
         不是「获取网页内容」（那是文章/RSS 提取器），也不是「获取 Safari 浏览器网页的详细信息」（只给标题和网址，跑不了脚本）。</span></li>
-      <li>粘贴方法：点进那段脚本编辑区 → 空白处<b>长按 → 全选 → 删除</b> → 再<b>长按 → 粘贴</b>。粘完第一行应该是 <code>// iOS 快捷指令 ·「在网页上运行 JavaScript」脚本  (v2)</code>，最后一行是 <code>})();</code>。</li>
+      <li>粘贴方法（这段编辑区<b>长按只会弹出「变量菜单」</b>，不是粘贴菜单）：<br>
+        <b>① </b>点进脚本区让光标闪 <b>② </b>用<b>双击</b>选中任意一个单词 → 弹出「剪切/拷贝/粘贴/全选」→ 点 <b>全选</b> <b>③ </b>再点 <b>粘贴</b>（整段旧脚本被替换）。<br>
+        <span class="hint">粘完自检：第一行应是 <code>// iOS 快捷指令 ·「在网页上运行 JavaScript」脚本  (v2)</code>，最后一行应是 <code>})();</code>。
+        如果看到的最后一行是 <code>completion(result);</code>，说明还是苹果的默认模板，没粘进去。</span></li>
       <li><b>不要再加「获取 URL 内容」</b>。脚本自己会把页面跳到服务器，并显示「已提交下载 · 进度」页，所以不会再出现「请确保传递了有效 URL」。<br>如果旧版快捷指令里还留着这个动作，<b>左滑删掉</b>；留着也不会重复下载（服务端 2 分钟内同地址只建一个任务）。</li>
       <li>点快捷指令名字改成 <b>视频下载</b>；点 <b>ⓘ</b> → 打开 <b>「在分享表单中显示」</b> → 接收类型勾 <b>URL</b> 和 <b>文本</b></li>
       <li><b>务必在 Safari 的视频页里</b>点 <b>分享 → 视频下载</b> 运行。在「快捷指令」App 里点 ▶ 测试是无效的——那时前台是快捷指令自己，取不到网页，结果会是空的。</li>
     </ol>
     <textarea id="sc" readonly spellcheck="false">${escHtml(scJs)}</textarea>
     <button class="btn" type="button" onclick="cp2()">复制脚本</button>
-    <div class="warn">iOS 15+ 的 .shortcut 文件必须 Apple 签名才能导入（签名工具只在 macOS 上），所以只能手动搭一次。</div>
+    <div class="warn">粘不进去就先走上面的<b>方案 A（书签）</b>：书签的网址栏是普通文本框，粘贴和编辑都更简单，效果完全一样。</div>
   </div>
 
   <div class="card">
