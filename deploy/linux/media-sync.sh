@@ -1,18 +1,20 @@
 #!/bin/bash
 # 把 videodownload 下载的内容硬链进 Jellyfin 媒体库（硬链，不占额外空间）
 #
-# 目录约定（站点名由服务端 util.siteKey 归一：missav.ai/.ws → missav，douyin → 抖音）：
-#   downloads/<站点>/<散文件>.mp4                 -> /srv/share/media/<站点>/<文件>
-#       站点库：missav / hanime1 / 抖音 ……（Jellyfin 里按「电影 / 主页视频」类型添加）
-#   downloads/<站点>/<剧名>/Season 01/<剧名> - S01E01.mp4
-#                                                -> /srv/share/media/电视剧/<剧名>/Season 01/
-#       剧集走 Jellyfin 的「节目」库，才会有季/集结构和下一集
+# 站点名由服务端 util.siteKey 归一：missav.ai/.ws → missav，douyin.com → 抖音
 #
-# 幂等：重复跑只会补新建的链接，不会覆盖已有文件。
-# 用法：/usr/local/bin/media-sync.sh
+# 两类站点，两种归置方式：
+#   A) 独立库站点（missav / hanime1 / 抖音）：整个目录原样镜像到 /srv/share/media/<站点>/
+#      → Jellyfin 里按「电影」类型加库即可（散文件、按集数命名的文件都能看到）
+#   B) 其它站点：
+#        <站点>/<剧名>/Season 01/xxx.mp4  -> 电视剧/<剧名>/Season 01/   （走「节目」库，有季/集）
+#        <站点>/<散文件>.mp4              -> /srv/share/media/<站点>/
+#
+# 幂等：重复跑只补新链接，不覆盖已有文件。
 set -u
 SRC=${SRC:-/home/xielaoban/videodownload-deploy/downloads}
 MEDIA=${MEDIA:-/srv/share/media}
+SITE_LIBS="missav hanime1 抖音"
 shopt -s nullglob
 
 link_file() { # $1=源文件 $2=目标目录
@@ -22,13 +24,40 @@ link_file() { # $1=源文件 $2=目标目录
   [ -e "$dest/$base" ] || ln "$f" "$dest/$base" 2>/dev/null || cp -n "$f" "$dest/$base" 2>/dev/null
 }
 
+mirror() { # $1=源目录 $2=目标目录（递归硬链，只认视频扩展名）
+  local src=$1 dst=$2 f base
+  mkdir -p "$dst" 2>/dev/null || return 0
+  for f in "$src"/*; do
+    [ -e "$f" ] || continue
+    base=$(basename "$f")
+    if [ -d "$f" ]; then
+      mirror "$f" "$dst/$base"
+    else
+      case "$base" in
+        *.mp4|*.mkv|*.webm|*.ts) link_file "$f" "$dst" ;;
+      esac
+    fi
+  done
+}
+
+is_site_lib() {
+  local s
+  for s in $SITE_LIBS; do [ "$s" = "$1" ] && return 0; done
+  return 1
+}
+
 for site_dir in "$SRC"/*/; do
   site=$(basename "$site_dir")
   case "$site" in .wvd-tmp|.tmp-upload|.*) continue ;; esac
+
+  if is_site_lib "$site"; then
+    mirror "$site_dir" "$MEDIA/$site"
+    continue
+  fi
+
   for item in "$site_dir"/*; do
     name=$(basename "$item")
     if [ -d "$item" ]; then
-      # 剧集目录：<剧名>/Season XX/*.mp4
       for season_dir in "$item"/*/; do
         season=$(basename "$season_dir")
         case "$season" in Season*|S[0-9]*) ;; *) continue ;; esac
@@ -40,9 +69,7 @@ for site_dir in "$SRC"/*/; do
       done
     else
       case "$name" in
-        *.mp4|*.mkv|*.webm|*.ts)
-          link_file "$item" "$MEDIA/$site"
-          ;;
+        *.mp4|*.mkv|*.webm|*.ts) link_file "$item" "$MEDIA/$site" ;;
       esac
     fi
   done

@@ -10,6 +10,12 @@ const direct = require('./direct');
 const ytdlp = require('./ytdlp');
 const cfdl = require('./cfdl');
 
+/**
+ * 「一个站一个媒体库」的站点：目录平铺，不建 <剧名>/Season XX 结构。
+ * 原因：这类站大多是单集视频，Jellyfin 用「电影」库最直观；建了 Season 目录反而扫不到。
+ */
+const FLAT_SITES = new Set(['missav', 'hanime1', '抖音']);
+
 /* ------------------------------------------------------------------ */
 /*  网络请求封装：带 Referer / Cookie / UA / 重试                       */
 /* ------------------------------------------------------------------ */
@@ -370,7 +376,9 @@ class TaskStore {
     }
     // 剧集识别：有剧名 + 集数的，按 Jellyfin 标准剧集结构落盘
     //   downloads/<站点>/<剧名>/Season XX/<剧名> - SXXEXX.ext
-    const ep = parseEpisode(name);
+    // 例外：missav / hanime1 / 抖音 是「一个站一个库」，库里基本都是单集视频，
+    // 建 Season 目录反而会让「电影」类型库看不到，所以这三个站一律平铺。
+    const ep = FLAT_SITES.has(site) ? null : parseEpisode(name);
     if (ep && ep.show && ep.episode > 0) {
       const show = util.sanitizeFilename(ep.show);
       const season = String(ep.season || 1).padStart(2, '0');
