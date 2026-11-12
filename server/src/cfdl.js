@@ -5,12 +5,24 @@ const { execFile } = require('child_process');
 const path = require('path');
 const config = require('./config');
 
+/**
+ * surrit 的分辨率子列表（/<uuid>/720p/video.m3u8）转成 master（/<uuid>/playlist.m3u8）。
+ * 子列表里只有单一画质，换成 master 才能在全部画质里自动选最高（1080p）。
+ */
+function toMasterPlaylist(u) {
+  const s = String(u || '');
+  const m = s.match(/^(https?:\/\/surrit\.com\/[0-9a-f-]{36})\/(?:\d{3,4}p\/)?(?:video|playlist)\.m3u8(\?[^#]*)?$/i);
+  return m ? m[1] + '/playlist.m3u8' + (m[2] || '') : s;
+}
+
 function download(task, ctx) {
   return new Promise((resolve, reject) => {
     const py = config.resolvePython();
     const script = path.join(config.ROOT, 'server', 'src', 'dl_cf.py');
     const tmpOut = ctx.tmpFile + '.cf.mp4';
-    const args = [script, '--url', task.url, '--referer', task.referer || '', '--out', tmpOut, '--workers', String((ctx.config && ctx.config.cfWorkers) || 12)];
+    const srcUrl = toMasterPlaylist(task.url);
+    if (srcUrl !== task.url && ctx.log) ctx.log('已切换到 master 播放列表（自动选最高画质）');
+    const args = [script, '--url', srcUrl, '--referer', task.referer || '', '--out', tmpOut, '--workers', String((ctx.config && ctx.config.cfWorkers) || 12)];
 
     let settled = false;
     const child = execFile(py, args, { timeout: 0, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -49,4 +61,4 @@ function download(task, ctx) {
   });
 }
 
-module.exports = { download };
+module.exports = { download, toMasterPlaylist };

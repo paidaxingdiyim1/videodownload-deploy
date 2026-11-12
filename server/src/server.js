@@ -10,9 +10,10 @@ const config = require('./config');
 const tasks = require('./tasks');
 const ytdlp = require('./ytdlp');
 const util = require('./util');
+const cfdl = require('./cfdl');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.15';
+const VERSION = '1.5.16';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -296,7 +297,8 @@ const server = http.createServer(async (req, res) => {
         const py = config.resolvePython();
         const script = path.join(config.ROOT, 'server', 'src', 'cf_parse.py');
         const out = await new Promise((resolve, reject) => {
-          execFile(py, [script, '--url', body.url, '--referer', body.referer || ''], { timeout: 90000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+          const srcUrl = cfdl.toMasterPlaylist(body.url);
+          execFile(py, [script, '--url', srcUrl, '--referer', body.referer || ''], { timeout: 90000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
             if (err) return reject(new Error(String(stderr || stdout || err.message).trim()));
             try { resolve(JSON.parse(String(stdout).trim())); }
             catch (e) { reject(new Error('解析输出失败：' + String(stdout).slice(0, 200))); }
@@ -323,6 +325,20 @@ const server = http.createServer(async (req, res) => {
       if (token !== cfg.token) {
         return send(res, 401, { ok: false, error: 'token 无效，请在扩展设置里重新配对' }, cors);
       }
+    }
+
+    /* ---- 极简下载入口（GET，给 iOS 快捷指令用：/api/quick-download?token=xx&url=xx）---- */
+    if (pathname === '/api/quick-download' && req.method === 'GET') {
+      const u = url.searchParams.get('url') || '';
+      if (!u || !/^https?:\/\//i.test(u)) return send(res, 400, { ok: false, error: '缺少 url' }, cors);
+      const snap = tasks.create({
+        url: u,
+        title: url.searchParams.get('title') || '',
+        kind: 'auto',
+        mode: 'auto',
+        referer: url.searchParams.get('referer') || '',
+      });
+      return send(res, 200, { ok: true, task: snap }, cors);
     }
 
     /* ---- 新建下载 ---- */
