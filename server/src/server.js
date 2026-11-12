@@ -13,7 +13,7 @@ const util = require('./util');
 const cfdl = require('./cfdl');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.21';
+const VERSION = '1.5.22';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -1183,7 +1183,10 @@ function iosGuidePage() {
       <li><b>设置 → 快捷指令 → 打开「允许运行脚本」</b>（iOS 17/18 在「设置 → 快捷指令 → 高级」里）</li>
       <li>打开「快捷指令」App → 右上角 <b>+</b>，只保留两个动作：<br>
         ① <b>接收</b>「Safari 浏览器」的<b>网页</b>输入（分享到本快捷指令时自动带进来）<br>
-        ② <b>「在网页上运行 JavaScript」</b> → 把下面这段脚本<b>全部粘贴</b>进去</li>
+        ② <b>「在网页上运行 JavaScript」</b> → 把下面这段脚本<b>全部粘贴</b>进去<br>
+        <span class="hint">认准动作名：<b>在网页上运行 JavaScript</b>（蓝色 Safari 指南针图标，在操作列表「网页」分组最下面）。
+        不是「获取网页内容」（那是文章/RSS 提取器），也不是「获取 Safari 浏览器网页的详细信息」（只给标题和网址，跑不了脚本）。</span></li>
+      <li>粘贴方法：点进那段脚本编辑区 → 空白处<b>长按 → 全选 → 删除</b> → 再<b>长按 → 粘贴</b>。粘完第一行应该是 <code>// iOS 快捷指令 ·「在网页上运行 JavaScript」脚本  (v2)</code>，最后一行是 <code>})();</code>。</li>
       <li><b>不要再加「获取 URL 内容」</b>。脚本自己会把页面跳到服务器，并显示「已提交下载 · 进度」页，所以不会再出现「请确保传递了有效 URL」。<br>如果旧版快捷指令里还留着这个动作，<b>左滑删掉</b>；留着也不会重复下载（服务端 2 分钟内同地址只建一个任务）。</li>
       <li>点快捷指令名字改成 <b>视频下载</b>；点 <b>ⓘ</b> → 打开 <b>「在分享表单中显示」</b> → 接收类型勾 <b>URL</b> 和 <b>文本</b></li>
       <li><b>务必在 Safari 的视频页里</b>点 <b>分享 → 视频下载</b> 运行。在「快捷指令」App 里点 ▶ 测试是无效的——那时前台是快捷指令自己，取不到网页，结果会是空的。</li>
