@@ -13,12 +13,22 @@
   python dl_cf.py --url <master.m3u8> --referer <页面URL> --out <输出.mp4> [--ffmpeg <路径>]
 进度：stdout 每若干分片输出一行 "PROGRESS <0-100>"，最后 "OK <路径>"。
 """
-import sys, os, re, subprocess, tempfile, argparse, threading
+import sys, os, re, shutil, glob, time, atexit, signal, subprocess, tempfile, argparse, threading
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 from curl_cffi import requests as cffi
 
 IMPERSONATE = ["firefox135", "firefox133"]
+
+def sweep_stale(hours=6):
+    """清掉上次被 SIGKILL / 断电中断后遗留的分片目录（原先每次泄漏几十 MB~几 GB）。"""
+    cutoff = time.time() - hours * 3600
+    for p in glob.glob(os.path.join(tempfile.gettempdir(), 'wvd_cf_*')):
+        try:
+            if os.path.isdir(p) and os.path.getmtime(p) < cutoff:
+                shutil.rmtree(p, ignore_errors=True)
+        except OSError:
+            pass
 
 def build_headers(origin):
     return {
@@ -49,6 +59,7 @@ def main():
     ap.add_argument('--ffmpeg', default='')
     ap.add_argument('--workers', type=int, default=12)
     args = ap.parse_args()
+    sweep_stale()
 
     origin = ''
     if args.referer:
@@ -94,6 +105,20 @@ def main():
 
     # 4) 并发下载分片（带重试 + 进度输出）
     tmpdir = tempfile.mkdtemp(prefix='wvd_cf_')
+
+    def _cleanup():
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    atexit.register(_cleanup)                       # 正常结束 / 异常退出
+    def _on_term(*_a):                              # 被取消时立刻清完再退，不等线程收尾
+        _cleanup()
+        os._exit(143)
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_sig, _on_term)
+        except (ValueError, OSError):
+            pass
+
     done = [0]
     lock = threading.Lock()
 

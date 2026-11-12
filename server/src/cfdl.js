@@ -52,9 +52,13 @@ function download(task, ctx) {
       });
     }
 
-    // 任务取消时杀掉子进程
+    // 任务取消时杀掉子进程：先 SIGTERM 让 Python 清掉分片临时目录，3 秒后还没退再 SIGKILL
     if (ctx && ctx.signal) {
-      const onAbort = () => { try { child.kill('SIGKILL'); } catch (_) {} };
+      const onAbort = () => {
+        try { child.kill('SIGTERM'); } catch (_) {}
+        const t = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} }, 3000);
+        if (t.unref) t.unref();
+      };
       if (ctx.signal.aborted) onAbort();
       else ctx.signal.addEventListener('abort', onAbort, { once: true });
     }
