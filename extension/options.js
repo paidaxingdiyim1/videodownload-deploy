@@ -380,7 +380,23 @@ async function renderFiles() {
   });
 }
 
+/* ------------------------------ 链路测速 ------------------------------ */
+
+function speedUrl(target) {
+  const base = (target === 'server' ? $('#serverUrl').value : $('#localUrl').value)
+    .trim().replace(/\/+$/, '') || 'http://127.0.0.1:8765';
+  const token = (target === 'server' ? $('#serverToken').value : $('#localToken').value).trim();
+  return base + '/speed' + (token ? '?token=' + encodeURIComponent(token) : '');
+}
+
+async function openSpeed(target) {
+  await save(); // 先把手填的地址/Token 存下来，页面里就直接能用
+  chrome.tabs.create({ url: speedUrl(target) });
+}
+
 $('#save').addEventListener('click', save);
+$('#speedServer').addEventListener('click', () => openSpeed('server'));
+$('#speedLocal').addEventListener('click', () => openSpeed('local'));
 $('#test').addEventListener('click', test);
 $('#pairServer').addEventListener('click', () => pairOne('server', $('#test-result')));
 $('#pairLocal').addEventListener('click', () => pairOne('local', $('#test-result')));

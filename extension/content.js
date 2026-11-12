@@ -315,6 +315,14 @@
 
   const MANIFEST_RE = /\.(m3u8|mpd)(\?|#|$)/i;
 
+  /** HTML 实体还原：从页面源码里抠出来的地址常带 &amp;，直接请求会 403 */
+  function dec(u) {
+    return String(u == null ? '' : u)
+      .replace(/&amp;/gi, '&')
+      .replace(/&#0*38;/g, '&')
+      .replace(/&#x0*26;/gi, '&');
+  }
+
   function candidatesOf(v) {
     const out = [];
     const push = (u) => {
@@ -927,7 +935,7 @@
       const r = await fetch(location.origin + '/download?v=' + vid, { credentials: 'include' });
       if (!r.ok) return null;
       const html = await r.text();
-      const urls = html.match(/https?:\/\/[^\s"'<>]*\.mp4[^\s"'<>]*/gi) || [];
+      const urls = (html.match(/https?:\/\/[^\s"'<>]*\.mp4[^\s"'<>]*/gi) || []).map(dec);
       if (!urls.length) return null;
       const q = (u) => { const m = u.match(/(\d{3,4})p/i); return m ? parseInt(m[1], 10) : 0; };
       urls.sort((a, b) => q(b) - q(a));

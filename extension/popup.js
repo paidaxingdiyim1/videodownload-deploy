@@ -346,6 +346,12 @@ async function init() {
     setTimeout(refresh, 1200);
   });
   $('#folder').addEventListener('click', () => send({ type: 'openFolder', target: saveTarget }));
+  $('#speed').addEventListener('click', () => {
+    const local = saveTarget === 'local';
+    const base = String((local ? cfg.localUrl : cfg.serverUrl) || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+    const tok = (local ? cfg.localToken : cfg.serverToken) || '';
+    chrome.tabs.create({ url: base + '/speed' + (tok ? '?token=' + encodeURIComponent(tok) : '') });
+  });
   $('#options').addEventListener('click', () => chrome.runtime.openOptionsPage());
   $('#parse-btn').addEventListener('click', doParse);
   $('#parse-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') doParse(); });

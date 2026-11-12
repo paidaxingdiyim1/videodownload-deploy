@@ -125,6 +125,19 @@
     </section>
 
     <section class="card">
+      <h2>链路测速</h2>
+      <div class="field">
+        <label>代理节点测速（挑最快的那条线路下载）</label>
+        <p class="hint">先测服务器上每个代理节点的延迟，再逐个真下数据量出 MB/s；选中哪条，后续下载就走哪条。测的是服务所在电脑的 Clash 节点，跟浏览器自身的代理无关。</p>
+        <div class="row actions">
+          <button id="speedServer" class="btn">打开服务器测速页</button>
+          <button id="speedLocal" class="btn">打开本机测速页</button>
+        </div>
+        <p class="hint">页面里还能批量提交链接（一行一个）。地址和 Token 直接用上面填好的，会自动带上。</p>
+      </div>
+    </section>
+
+    <section class="card">
       <h2>说明</h2>
       <ul class="notes">
         <li>支持 HLS（m3u8，含 AES-128 加密分片）、DASH、直链 MP4/WebM 等。</li>

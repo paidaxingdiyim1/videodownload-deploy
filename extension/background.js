@@ -28,6 +28,18 @@ const IGNORE_RE = /\.(ts|m4s|aac\.seg|jpg|jpeg|png|gif|webp|svg|css|js|json|html
 /** 无扩展名音频流（抖音 media-audio-mp4a 之类）按 URL 特征识别 */
 const AUDIO_HINT_RE = /media-audio|audio-mp4a|\/audio[\/._-]|_audio\//i;
 
+/**
+ * 地址清洗：从 HTML 里抠出来的链接常带 &amp; 之类的实体，
+ * 原样丢给服务器会让 token 参数被截断（表现就是 403）。
+ */
+function cleanUrl(u) {
+  return String(u == null ? '' : u)
+    .replace(/&amp;/gi, '&')
+    .replace(/&#0*38;/g, '&')
+    .replace(/&#x0*26;/gi, '&')
+    .trim();
+}
+
 /** 短视频/中视频平台：主动嗅探价值低，改为「粘贴分享链接解析」，不做资源嗅探 */
 function isNoSniffHost(u) {
   try {
@@ -703,7 +715,7 @@ async function startDownload(msg, sender) {
     : ((awemeHit && awemeHit.desc) || msg.title || tabTitles.get(tabId) || '');
 
   const payload = {
-    url: msg.url,
+    url: cleanUrl(msg.url),
     title,
     kind,
     mode: msg.mode || cfg.mode || 'auto',

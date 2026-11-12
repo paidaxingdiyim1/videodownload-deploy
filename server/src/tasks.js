@@ -134,15 +134,17 @@ class TaskStore {
   create(input) {
     const cfg = config.load();
     const uid = util.uid('dl');
+    // 旧版扩展会把 HTML 里的 &amp; 原样带过来，导致 token 参数被截断 → 403，这里兜底还原
+    const unesc = (u) => String(u == null ? '' : u).replace(/&amp;/gi, '&').replace(/&#0*38;/g, '&');
     // 标题：扩展没给、或只给了「视频」这类占位词时，改从 URL 猜
     const rawTitle = String(input.title || '').trim();
     const PLACEHOLDER = /^(视频|video|影片|媒体|media|player|播放|index|下载|download)$/i;
     // 去掉「 - Hanime1.me」「 | MissAV」这类尾巴：否则同一个视频从下载页提交会跑到「下载」目录
     const cleanedTitle = util.cleanTitle(rawTitle);
-    const title = util.sanitizeFilename(!cleanedTitle || PLACEHOLDER.test(cleanedTitle) ? util.guessTitleFromUrl(input.url) : cleanedTitle);
+    const title = util.sanitizeFilename(!cleanedTitle || PLACEHOLDER.test(cleanedTitle) ? util.guessTitleFromUrl(unesc(input.url)) : cleanedTitle);
     const task = {
       id: uid,
-      url: input.url,
+      url: unesc(input.url),
       title,
       // 标题来源：client=扩展传来的真实标题（页面文案），guess=从 URL 猜的占位。
       // ytdlp 引擎只对 guess 标题做探测覆盖（yt-dlp 对 CDN 裸直链探测出的
@@ -157,7 +159,7 @@ class TaskStore {
       headers: input.headers || null,
       cookies: input.cookies || null,
       withSeparateAudio: !!input.withSeparateAudio,
-      audioUrl: String(input.audioUrl || ''),
+      audioUrl: unesc(input.audioUrl || ''),
       customName: String(input.customName || '').trim(),
       status: 'queued',
       stage: 'queued',

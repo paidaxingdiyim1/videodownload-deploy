@@ -14,7 +14,7 @@ const cfdl = require('./cfdl');
 const nettest = require('./nettest');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.26';
+const VERSION = '1.5.27';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
