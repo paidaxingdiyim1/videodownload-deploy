@@ -12,7 +12,7 @@ const ytdlp = require('./ytdlp');
 const util = require('./util');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.14';
+const VERSION = '1.5.15';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -579,6 +579,12 @@ const server = http.createServer(async (req, res) => {
       return res.end(dashboardPage(tools));
     }
 
+    /* ---- 手机版下载页：iPhone/安卓浏览器直接访问，粘贴分享链接即可下载 ---- */
+    if (pathname === '/m' || pathname === '/mobile') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(mobilePage());
+    }
+
     if (pathname === '/api/download-file') {
       // 供用户从浏览器直接取回文件（可选）
       const file = url.searchParams.get('path');
@@ -689,6 +695,7 @@ function dashboardPage(tools) {
   <p class="sub">v${VERSION} · 监听 ${bindHost === '0.0.0.0' ? '所有网卡' : bindHost}:${cfg.port}${LAN_BIND ? ' · 局域网可访问（需 Token）' : ' · 只接受本机请求'}</p>
   <div class="row"><span>下载目录</span><code>${cfg.downloadDir}</code></div>
   ${LAN_BIND ? `<div class="row"><span>局域网地址</span><code>${lanAddresses().map((a) => `http://${a}:${cfg.port}`).join(' · ')}</code></div>` : ''}
+  ${LAN_BIND ? `<div class="row"><span>手机访问</span><code><a href="http://${lanAddresses()[0] || '127.0.0.1'}:${cfg.port}/m?token=${cfg.token}" target="_blank">http://${lanAddresses()[0] || '127.0.0.1'}:${cfg.port}/m</a><br>手机打开上面地址即可（已含访问码，别分享给别人）</code></div>` : ''}
   <div class="row"><span>yt-dlp</span><span>${dot(tools.ytdlp.ok)}${tools.ytdlp.ok ? tools.ytdlp.version : '未安装（复杂站点需要）'}</span></div>
   <div class="row"><span>ffmpeg</span><span>${dot(tools.ffmpeg.ok)}${tools.ffmpeg.ok ? '已安装（可合并音视频/转 MP4）' : '未安装（HLS 会保存为 .ts）'}</span></div>
   <div class="row"><span>并发 / 分片并发</span><span>${cfg.concurrency} / ${cfg.segmentConcurrency}</span></div>
@@ -696,6 +703,239 @@ function dashboardPage(tools) {
   ${tools.ytdlp.ok && tools.ffmpeg.ok ? '' : '<div class="warn">建议运行 <code>setup.bat</code> 安装 yt-dlp 与 ffmpeg，可支持更多站点并自动合并音视频。</div>'}
   <div class="warn">请只下载你有权保存的内容，并遵守目标网站的服务条款与相关法律。</div>
 </div></html>`;
+}
+
+/** 手机版下载页（移动端友好：粘贴分享链接 → 下到服务器 → 看进度 → 存手机/播放） */
+function mobilePage() {
+  return `<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#ffffff">
+<title>视频下载</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font:15px/1.55 -apple-system,"SF Pro SC","PingFang SC","Microsoft YaHei",sans-serif;background:#f6f7f9;color:#1a1d21;padding-bottom:env(safe-area-inset-bottom)}
+  header{background:#fff;padding:15px 18px 12px;border-bottom:1px solid #eef0f3;position:sticky;top:0;z-index:10}
+  header h1{font-size:18px;margin:0;display:flex;align-items:center;gap:8px}
+  header .dot{width:8px;height:8px;border-radius:50%;background:#12a150;flex:none}
+  header .sub{color:#6b7280;font-size:12.5px;margin-top:4px}
+  main{padding:14px 14px 40px}
+  .card{background:#fff;border-radius:14px;padding:14px 15px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .card h2{font-size:14px;margin:0 0 10px;color:#374151;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .card h2 .n{color:#9aa0a6;font-weight:400;font-size:12px}
+  textarea,input[type=text]{width:100%;border:1px solid #dfe2e7;border-radius:10px;padding:10px 12px;font-size:15px;font-family:inherit;outline:none;background:#fbfcfd;color:#1a1d21}
+  textarea:focus,input:focus{border-color:#2b6cff;background:#fff}
+  textarea{min-height:76px;resize:vertical}
+  .btn{width:100%;border:0;border-radius:11px;padding:13px;font-size:16px;font-weight:600;color:#fff;background:#2b6cff;margin-top:10px;cursor:pointer}
+  .btn:active{opacity:.85}
+  .btn:disabled{background:#b9c6e8}
+  .hint{color:#9aa0a6;font-size:12px;margin-top:8px}
+  .task{padding:11px 0;border-bottom:1px solid #f2f3f5}
+  .task:last-child{border-bottom:0}
+  .task .t{font-size:14px;font-weight:500;word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .task .meta{font-size:12px;color:#9aa0a6;margin-top:4px;display:flex;justify-content:space-between;gap:10px}
+  .task .err{font-size:11.5px;color:#e5484d;margin-top:4px;word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .bar{height:5px;background:#eef0f4;border-radius:3px;margin-top:7px;overflow:hidden}
+  .bar i{display:block;height:100%;background:#2b6cff;border-radius:3px;transition:width .4s}
+  .st-done{color:#12a150}.st-error{color:#e5484d}.st-run{color:#2b6cff}
+  .file{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid #f2f3f5;text-decoration:none;color:inherit}
+  .file:last-child{border-bottom:0}
+  .file:active{opacity:.7}
+  .file .ico{width:34px;height:34px;border-radius:9px;background:#eef3ff;color:#2b6cff;display:flex;align-items:center;justify-content:center;font-size:15px;flex:none}
+  .file .info{flex:1;min-width:0}
+  .file .n{font-size:13.5px;word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .file .s{font-size:11.5px;color:#9aa0a6;margin-top:2px}
+  .empty{color:#9aa0a6;font-size:13px;text-align:center;padding:16px 0}
+  .toast{position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom));transform:translateX(-50%);background:rgba(20,22,26,.92);color:#fff;padding:10px 16px;border-radius:10px;font-size:13.5px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:99;max-width:88vw;text-align:center}
+  .toast.show{opacity:1}
+</style></head>
+<body>
+<header>
+  <h1><span class="dot"></span>视频下载</h1>
+  <div class="sub" id="sub">连接中…</div>
+</header>
+<main>
+  <div class="card" id="tokenCard" style="display:none">
+    <h2>访问码</h2>
+    <input type="text" id="tokenInput" placeholder="粘贴服务端 Token" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button class="btn" type="button" data-act="saveToken">确定</button>
+    <div class="hint">在服务器 server/config.json 的 token 字段，或电脑端状态页复制「手机访问」链接</div>
+  </div>
+
+  <div class="card">
+    <h2>粘贴分享链接</h2>
+    <textarea id="input" placeholder="抖音 / 快手 / B站 / missav 的分享文案或链接，整段粘贴即可"></textarea>
+    <button class="btn" id="go" type="button" data-act="submit">开始下载</button>
+    <div class="hint">自动从分享文案提取链接；下载在服务器完成，完成后点文件即可存到手机</div>
+  </div>
+
+  <div class="card">
+    <h2>下载任务 <span class="n" id="taskCount"></span></h2>
+    <div id="tasks"><div class="empty">暂无任务</div></div>
+  </div>
+
+  <div class="card">
+    <h2>已下载文件 <span class="n" id="fileCount"></span></h2>
+    <div id="files"><div class="empty">加载中…</div></div>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  var TOKEN_KEY = 'wvd_token';
+  var token = '';
+  try { token = new URLSearchParams(location.search).get('token') || ''; } catch (e) {}
+  if (token) { try { localStorage.setItem(TOKEN_KEY, token); } catch (e) {} }
+  else { try { token = localStorage.getItem(TOKEN_KEY) || ''; } catch (e) {} }
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function toast(msg) {
+    var t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(t._h);
+    t._h = setTimeout(function () { t.classList.remove('show'); }, 2400);
+  }
+  function fmt(n) {
+    n = Number(n) || 0;
+    if (n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GB';
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    if (n >= 1024) return Math.round(n / 1024) + ' KB';
+    return n + ' B';
+  }
+  /** 从整段分享文案里提取第一个 http(s) 链接（到空白或中文标点为止，避免正则转义问题） */
+  function extractUrl(raw) {
+    var s = String(raw || '').trim();
+    var i = s.indexOf('http');
+    if (i < 0) return '';
+    var tail = s.slice(i);
+    var stops = [' ', '\\n', '\\r', '\\t', '，', '。', '；', '、', '！', '？', '）', '】', '」', '』', '"', "'", '“', '”'];
+    var end = tail.length;
+    for (var k = 0; k < stops.length; k++) {
+      var p = tail.indexOf(stops[k]);
+      if (p >= 0 && p < end) end = p;
+    }
+    return tail.slice(0, end);
+  }
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ 'Content-Type': 'application/json', 'X-Auth-Token': token }, opts.headers || {});
+    return fetch(path, opts).then(function (r) { return r.json(); });
+  }
+
+  function saveToken() {
+    var v = ($('tokenInput').value || '').trim();
+    if (!v) { toast('请输入访问码'); return; }
+    token = v;
+    try { localStorage.setItem(TOKEN_KEY, v); } catch (e) {}
+    $('tokenCard').style.display = 'none';
+    refresh();
+  }
+
+  function submit() {
+    var raw = $('input').value || '';
+    var url = extractUrl(raw);
+    if (!url) { toast('没识别到链接，请检查分享文案'); return; }
+    if (!token) { $('tokenCard').style.display = 'block'; toast('请先填写访问码'); return; }
+    var btn = $('go');
+    btn.disabled = true; btn.textContent = '提交中…';
+    api('/api/download', {
+      method: 'POST',
+      body: JSON.stringify({ url: url, title: '', kind: 'auto', mode: 'auto', referer: location.origin }),
+    }).then(function (r) {
+      btn.disabled = false; btn.textContent = '开始下载';
+      if (r && r.ok) { $('input').value = ''; toast('已提交，正在下载'); refresh(); }
+      else { toast('失败：' + ((r && r.error) || '未知错误')); }
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = '开始下载';
+      toast('网络错误：' + (e && e.message || e));
+    });
+  }
+
+  function renderTasks(list) {
+    var box = $('tasks');
+    $('taskCount').textContent = list && list.length ? list.length + ' 条' : '';
+    if (!list || !list.length) { box.innerHTML = '<div class="empty">暂无任务</div>'; return; }
+    var html = '';
+    list.slice(0, 10).forEach(function (t) {
+      var st = t.status, label = '排队中', cls = '';
+      if (st === 'running' || st === 'decrypting' || st === 'merging') {
+        label = '下载中' + (t.progress ? ' ' + Math.round(t.progress) + '%' : '');
+        cls = 'st-run';
+      } else if (st === 'done') { label = '已完成'; cls = 'st-done'; }
+      else if (st === 'error') { label = '失败'; cls = 'st-error'; }
+      else if (st === 'canceled') { label = '已取消'; }
+      html += '<div class="task"><div class="t">' + esc(t.title || '未命名') + '</div>';
+      html += '<div class="meta"><span class="' + cls + '">' + label + '</span><span>' + esc(t.engine || '') + '</span></div>';
+      if (st === 'running' || st === 'merging' || st === 'decrypting') {
+        html += '<div class="bar"><i style="width:' + (Number(t.progress) || 0) + '%"></i></div>';
+      }
+      if (st === 'error' && t.error) html += '<div class="err">' + esc(String(t.error).slice(0, 160)) + '</div>';
+      html += '</div>';
+    });
+    box.innerHTML = html;
+  }
+
+  function renderFiles(list) {
+    var box = $('files');
+    $('fileCount').textContent = list && list.length ? list.length + ' 个' : '';
+    if (!list || !list.length) { box.innerHTML = '<div class="empty">还没有下载完成的文件</div>'; return; }
+    var html = '';
+    list.slice(0, 30).forEach(function (f) {
+      html += '<a class="file" href="' + esc(f.url) + '" target="_blank" rel="noopener">'
+        + '<div class="ico">&#9654;</div><div class="info"><div class="n">' + esc(f.name || '') + '</div>'
+        + '<div class="s">' + fmt(f.size) + '</div></div></a>';
+    });
+    box.innerHTML = html;
+  }
+
+  function refresh() {
+    if (!token) { $('tokenCard').style.display = 'block'; $('sub').textContent = '需要访问码'; return; }
+    Promise.all([
+      api('/api/health').catch(function () { return null; }),
+      api('/api/tasks').catch(function () { return null; }),
+      api('/api/files').catch(function () { return null; }),
+    ]).then(function (r) {
+      var h = r[0], t = r[1], f = r[2];
+      if (t && t.ok === false && String(t.error || '').indexOf('token') >= 0) {
+        $('sub').textContent = '访问码无效，请重新填写';
+        $('tokenCard').style.display = 'block';
+        return;
+      }
+      if (h && h.ok) {
+        var busy = (Number(h.active) || 0) + (Number(h.queued) || 0);
+        $('sub').textContent = '已连接 · v' + (h.version || '') + ' · ' + (busy ? busy + ' 个任务进行中' : '空闲');
+        $('tokenCard').style.display = 'none';
+      }
+      renderTasks((t && t.tasks) || []);
+      renderFiles((f && f.files) || []);
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-act]') : null;
+    if (!el) return;
+    var act = el.getAttribute('data-act');
+    if (act === 'saveToken') saveToken();
+    else if (act === 'submit') submit();
+  });
+  $('input').addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submit();
+  });
+
+  if (!token) $('tokenCard').style.display = 'block';
+  refresh();
+  setInterval(refresh, 1500);
+})();
+</script>
+</body></html>`;
 }
 
 /* ----------------------------- 启动 ----------------------------- */
