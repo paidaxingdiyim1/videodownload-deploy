@@ -942,6 +942,7 @@ function speedPage() {
     <h2>当前线路 <span class="n" id="grp"></span></h2>
     <div class="now" id="now">—</div>
     <div class="hint">下载走 Clash 的 <b id="grpName">良心云</b> 分组（TUN 模式全量代理），这里选哪条，下载就用哪条。</div>
+    <div id="quick" style="margin-top:8px"></div>
     <div class="row2">
       <label>深度测速节点数<input id="top" type="number" value="8" min="1" max="30"></label>
       <label>每个节点下（MB）<input id="mb" type="number" value="6" min="1" max="30"></label>
@@ -1004,6 +1005,29 @@ function speedPage() {
     $('grp').textContent = st.group || '';
     $('grpName').textContent = st.group || '良心云';
     $('now').textContent = st.applied || st.now || '未知';
+    // 分组里嵌套的子分组（自动选择 / 故障转移 …）：一键切回去用自动挑的
+    var q = $('quick');
+    if (q) {
+      q.innerHTML = '';
+      var names = {};
+      for (var gi = 0; gi < (st.groups || []).length; gi++) names[st.groups[gi].name] = 1;
+      for (var ci = 0; ci < (st.children || []).length; ci++) {
+        var cn = st.children[ci];
+        if (!names[cn]) continue;
+        var b = document.createElement('button');
+        b.className = 'use' + (cn === st.now ? ' cur' : '');
+        b.style.marginRight = '8px';
+        b.textContent = '用 ' + cn;
+        b.setAttribute('data-node', cn);
+        b.onclick = function () {
+          var node = this.getAttribute('data-node');
+          api('/api/net/select', { node: node }).then(function (r) {
+            if (r.ok) { toast('已切换到 ' + node); load(); } else toast(r.error || '切换失败');
+          }).catch(function () { toast('切换失败'); });
+        };
+        q.appendChild(b);
+      }
+    }
     if (st.now) $('sub').textContent = '当前：' + st.now + (st.all ? ' · 共 ' + st.all + ' 个节点' : '');
     var links = (st.links && st.links.length) ? st.links : ((st.last && st.last.links) || []);
     $('took').textContent = st.at ? new Date(st.at).toLocaleTimeString('zh-CN', { hour12: false }) : '';

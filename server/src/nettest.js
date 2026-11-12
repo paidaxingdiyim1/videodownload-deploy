@@ -173,6 +173,7 @@ async function status() {
     const g = await mihomo.group(out.group);
     out.now = g.now;
     out.all = g.all.length;
+    out.children = g.all.slice();
     out.groups = (await mihomo.groups()).map((x) => ({ name: x.name, type: x.type, now: x.now }));
   } catch (e) {
     out.available = false;
