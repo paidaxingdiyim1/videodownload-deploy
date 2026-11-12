@@ -13,7 +13,7 @@ const util = require('./util');
 const cfdl = require('./cfdl');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.20';
+const VERSION = '1.5.21';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -327,10 +327,24 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    /* ---- 极简下载入口（GET，给 iOS 快捷指令用：/api/quick-download?token=xx&url=xx）---- */
+    /* ---- 极简下载入口（GET，给 iOS 快捷指令 / 书签用：/api/quick-download?token=xx&url=xx）---- */
     if (pathname === '/api/quick-download' && req.method === 'GET') {
       const u = url.searchParams.get('url') || '';
-      if (!u || !/^https?:\/\//i.test(u)) return send(res, 400, { ok: false, error: '缺少 url' }, cors);
+      const asHtml = wantsHtml(req);
+      const reply = (status, data) => {
+        if (!asHtml) return send(res, status, data, cors);
+        res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end(quickDownloadPage(data, cfg.token));
+      };
+      if (!u || !/^https?:\/\//i.test(u)) return reply(200, { ok: false, error: '缺少 url 参数' });
+
+      // 传进来的是网页而不是视频流：大概率是快捷指令 / 书签没取到直链
+      if (!looksLikeMedia(u)) return reply(200, { ok: false, error: 'PAGE', url: u });
+
+      // 去重：同一地址 2 分钟内重复提交（快捷指令里脚本跳转 + 获取URL内容双触发）只建一个任务
+      const dup = tasks.list().find((t) => t.url === u && Date.now() - (t.createdAt || 0) < 120000);
+      if (dup) return reply(200, { ok: true, task: dup, dup: true });
+
       const snap = tasks.create({
         url: u,
         title: url.searchParams.get('title') || '',
@@ -338,7 +352,7 @@ const server = http.createServer(async (req, res) => {
         mode: 'auto',
         referer: url.searchParams.get('referer') || '',
       });
-      return send(res, 200, { ok: true, task: snap }, cors);
+      return reply(200, { ok: true, task: snap }, cors);
     }
 
     /* ---- iOS 快捷指令：没找到直链时的提示页（带诊断信息，避免「无效 URL」）---- */
@@ -366,16 +380,17 @@ const server = http.createServer(async (req, res) => {
  .tip{background:#f6f8ff;border:1px solid #e0e7ff;color:#374151;padding:10px 12px;border-radius:9px;font-size:13px}
 </style></head><body><div class="card">
 <h1>没找到视频直链</h1>
-<p>请在视频页让视频 <b>播放 2~3 秒</b> 后再运行本快捷指令——暂停或还没加载时，页面里没有可用的流地址。</p>
+<p>请在视频页让视频 <b>播放 2~3 秒</b> 后，用 Safari 的 <b>分享 → 视频下载</b> 再跑一次——暂停或还在转圈时，页面里没有可用的流地址。</p>
 <table>
  <tr><td>页面域名</td><td>${h}</td></tr>
  <tr><td>已加载资源</td><td>${r} 个</td></tr>
  <tr><td>候选直链</td><td>${c} 个</td></tr>
  <tr><td>video 元素</td><td>${v} 个</td></tr>
 </table>
-${isMissav ? '<p class="tip">missav：确认视频正在播放（不是暂停/加载中），播放器会去 surrit 拉 m3u8。</p>' : ''}
+${r === '0' && v === '0' ? '<p class="tip"><b>资源数是 0</b>：说明脚本根本没在那个网页里运行。不要在「快捷指令」App 里点 ▶ 测试（那时前台是快捷指令自己，取不到网页）；请在 Safari 里通过分享菜单运行。</p>' : ''}
+${isMissav ? '<p class="tip">missav：确认视频正在播放（不是暂停/加载中），播放器会去 surrit 拉 m3u8；播放 2~3 秒后再点分享。</p>' : ''}
 ${isHanime ? '<p class="tip">hanime1：确认页面已完整加载，且页面上能看到「下载」入口。</p>' : ''}
-<p class="tip">把这一页截图发我，我能判断卡在哪一步。</p>
+<p class="tip">把这一页截图发我，我能判断卡在哪一步。也可以先用 <a href="/m?token=${encodeURIComponent(cfg.token)}">手机网页版</a> 粘贴链接试试。</p>
 </div></body></html>`);
     }
 
@@ -726,6 +741,116 @@ ${isHanime ? '<p class="tip">hanime1：确认页面已完整加载，且页面�
 
 /* ----------------------------- 面板页 ----------------------------- */
 
+/** 请求方要 HTML 吗（Safari / 快捷指令「获取URL内容」都会带 Accept: text/html） */
+function wantsHtml(req) {
+  return /\btext\/html\b/i.test(String(req.headers.accept || ''));
+}
+
+/** 这个地址看起来是媒体流/文件（而不是网页） */
+function looksLikeMedia(u) {
+  const s = String(u || '');
+  if (/\.(m3u8|mp4|m4v|webm|mkv|flv|mov|mp3|m4a|aac|mpd|ts)(\?|#|$)/i.test(s)) return true;
+  if (/\/hls\//i.test(s)) return true;
+  if (/mime_type=video/i.test(s)) return true;
+  return false;
+}
+
+/** 手机端「已提交下载」页：显示标题与实时进度，提交后立刻有反馈 */
+function quickDownloadPage(data, token) {
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const t = data && data.task;
+  const bad = !data || data.ok === false;
+
+  if (bad || data.error === 'PAGE') {
+    const isPage = data && data.error === 'PAGE';
+    return `<!doctype html><html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>${isPage ? '拿到的是网页地址' : '没提交成功'}</title>
+<style>
+ body{margin:0;font:15px/1.65 -apple-system,"PingFang SC",sans-serif;background:#f6f7f9;color:#1a1d21;padding:20px}
+ .card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+ h1{font-size:18px;margin:0 0 12px;color:#b42318}
+ ol{margin:8px 0 0;padding-left:20px} li{margin:7px 0}
+ b{color:#2b6cff} code{background:#f2f3f5;padding:1px 5px;border-radius:4px;font-size:12.5px;word-break:break-all}
+ .tip{background:#f6f8ff;border:1px solid #e0e7ff;color:#374151;padding:10px 12px;border-radius:9px;font-size:13px;margin-top:12px}
+ a.btn{display:block;text-align:center;background:#2b6cff;color:#fff;text-decoration:none;padding:12px;border-radius:11px;margin-top:14px;font-weight:600}
+</style></head><body><div class="card">
+<h1>${isPage ? '这条链接是网页，不是视频流' : esc((data && data.error) || '提交失败')}</h1>
+${isPage ? `<p>刚才提交的是页面地址：<br><code>${esc(data.url)}</code></p>
+<p>说明脚本没在页面里找到直链，按下面重试：</p>
+<ol>
+ <li>回到那个视频页，<b>让视频真正播放 2~3 秒</b>（暂停或还在转圈时拿不到地址）</li>
+ <li>点 Safari 的 <b>分享</b> → 选 <b>「视频下载」</b> 快捷指令</li>
+ <li>若报「没找到直链」，看诊断页上的资源数，把截图发我</li>
+</ol>
+<div class="tip">也可以在电脑上装扩展下载；或直接用<a href="/m?token=${encodeURIComponent(token)}">手机网页版</a>粘贴分享链接。</div>`
+      : `<p>${esc((data && data.error) || '未知错误')}</p>`}
+<a class="btn" href="/ios">看安装/使用说明</a>
+</div></body></html>`;
+  }
+
+  const st = { queued: '排队中', running: '下载中', merging: '合并中', decrypting: '解密中', done: '已完成', error: '失败', canceled: '已取消' }[t.status] || t.status;
+  const color = t.status === 'error' ? '#b42318' : (t.status === 'done' ? '#12a150' : '#2b6cff');
+  return `<!doctype html><html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>${data.dup ? '已在下载' : '已提交下载'}</title>
+<style>
+ body{margin:0;font:15px/1.6 -apple-system,"PingFang SC",sans-serif;background:#f6f7f9;color:#1a1d21;padding:20px}
+ .card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+ .big{font-size:22px;font-weight:700;margin:0 0 6px;color:${color}}
+ .name{font-size:15px;color:#111;word-break:break-word;margin:8px 0 4px}
+ .bar{height:8px;background:#eef0f3;border-radius:6px;overflow:hidden;margin:14px 0 8px}
+ .bar i{display:block;height:100%;width:${Math.max(2, t.progress || 0)}%;background:#2b6cff;border-radius:6px;transition:width .3s}
+ .meta{color:#6b7280;font-size:13px;display:flex;justify-content:space-between}
+ .err{color:#b42318;font-size:13px;margin-top:10px;word-break:break-word}
+ a.btn{display:block;text-align:center;background:#2b6cff;color:#fff;text-decoration:none;padding:12px;border-radius:11px;margin-top:18px;font-weight:600}
+ .tip{color:#6b7280;font-size:12.5px;margin-top:12px}
+</style></head><body><div class="card">
+<p class="big" id="st">${data.dup ? '这个视频已经在下载了' : '已提交下载'} · ${esc(st)}</p>
+<div class="name" id="name">${esc(t.title || '')}</div>
+<div class="bar"><i id="bar"></i></div>
+<div class="meta"><span id="pct">${Math.round(t.progress || 0)}%</span><span id="spd"></span></div>
+<div class="err" id="err">${esc(t.error || '')}</div>
+<div id="done" style="display:none;margin-top:14px"><a class="btn" id="dl" href="#">打开/播放文件</a></div>
+<a class="btn" href="/m?token=${encodeURIComponent(token)}" style="background:#111">手机网页版（看队列和文件）</a>
+<p class="tip">下载在服务器上跑，可以关掉这页；进度也能在手机网页版里看。</p>
+</div>
+<script>
+(function(){
+  var id=${JSON.stringify(t.id)}, token=${JSON.stringify(token)};
+  var ST={queued:'排队中',running:'下载中',merging:'合并中',decrypting:'解密中',done:'已完成',error:'失败',canceled:'已取消'};
+  function fmt(n){n=Number(n)||0;var u=['B','KB','MB','GB'],i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i];}
+  function set(t){
+    if(!t) return;
+    var s=document.getElementById('st'), e=document.getElementById('err');
+    s.textContent='${data.dup ? '这个视频已经在下载了' : '已提交下载'} · '+(ST[t.status]||t.status);
+    if(t.title) document.getElementById('name').textContent=t.title;
+    document.getElementById('bar').style.width=Math.max(2,t.progress||0)+'%';
+    document.getElementById('pct').textContent=Math.round(t.progress||0)+'%';
+    document.getElementById('spd').textContent=t.speed?fmt(t.speed)+'/s':'';
+    e.textContent=t.error||'';
+    if(t.status==='done'&&t.filePath){
+      var d=document.getElementById('done');
+      d.style.display='block';
+      document.getElementById('dl').href='/api/download-file?token='+token+'&path='+encodeURIComponent(t.filePath);
+    }
+  }
+  function tick(){
+    fetch('/api/tasks?token='+encodeURIComponent(token),{cache:'no-store'})
+      .then(function(r){return r.json()})
+      .then(function(j){
+        var t=(j.tasks||[]).filter(function(x){return x.id===id})[0];
+        if(t){ set(t); if(t.status==='done'||t.status==='error'||t.status==='canceled') return; }
+        setTimeout(tick,1500);
+      }).catch(function(){ setTimeout(tick,4000); });
+  }
+  setTimeout(tick,1200);
+})();
+</script>
+</body></html>`;
+}
+
 function mimeFor(file) {
   const map = {
     '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mkv': 'video/x-matroska',
@@ -999,7 +1124,7 @@ function mobilePage() {
 }
 
 /** Safari 书签（Bookmarklet）代码模板：__TOKEN__ 运行时替换成访问码 */
-const BM_TEMPLATE = String.raw`javascript:(function(){var h=location.hostname,c=[],S={};function A(u){u=String(u||'').trim();if(!/^https?:\/\//i.test(u)||/\.(ts|m4s|jpg|jpeg|png|gif|webp|css|js)(\?|$)/i.test(u)||S[u])return;S[u]=1;c.push(u)}try{performance.getEntriesByType('resource').forEach(function(e){var n=e.name||'';if(/\.m3u8(\?|$)/i.test(n)||/\.mp4(\?|$)/i.test(n))A(n)})}catch(e){}document.querySelectorAll('video').forEach(function(v){var x=v.currentSrc||v.src||'';if(/^https?:/i.test(x))A(x)});if(/hanime1?\./i.test(h)){var P=[];document.querySelectorAll('a[href]').forEach(function(a){if(/download|下载/i.test(a.href)||/download|下载/i.test(a.textContent||''))P.push(a.href)});try{var v=new URLSearchParams(location.search).get('v');if(v)P.push(location.origin+'/download?v='+v)}catch(e){}P.slice(0,3).forEach(function(u){try{var x=new XMLHttpRequest();x.open('GET',u,false);x.send();if(x.status>199&&x.status<300){var m,R=/https?:\/\/[^"'\s<>]*\.mp4[^"'\s<>]*/gi;while((m=R.exec(x.responseText)))A(m[0])}}catch(e){}})}function Q(u){var s=/playlist\.m3u8/i.test(u)?1e5:0,m=u.match(/(\d{3,4})p/i);if(m)s+=+m[1];if(/1080/.test(u))s=Math.max(s,1080);else if(/720/.test(u))s=Math.max(s,720);return s}c.sort(function(a,b){return Q(b)-Q(a)});var u=c[0]||'',M=u.match(/^(https?:\/\/surrit\.com\/[0-9a-f-]{36})\/(?:\d{3,4}p\/)?(?:video|playlist)\.m3u8(\?.*)?$/i);if(M)u=M[1]+'/playlist.m3u8'+(M[2]||'');if(!u){alert('没找到视频直链，先让视频播放几秒再试');return}var t='http://192.168.5.22:8765/api/quick-download?token=__TOKEN__&url='+encodeURIComponent(u);if(!window.open(t,'_blank'))location.href=t})();`;
+const BM_TEMPLATE = String.raw`javascript:(function(){var h=location.hostname,c=[],S={};function A(u){u=String(u||'').trim();if(!/^https?:\/\//i.test(u)||/\.(ts|m4s|jpg|jpeg|png|gif|webp|css|js)(\?|$)/i.test(u)||S[u])return;S[u]=1;c.push(u)}try{performance.getEntriesByType('resource').forEach(function(e){var n=e.name||'';if(/\.m3u8(\?|$)/i.test(n)||/\.mp4(\?|$)/i.test(n))A(n)})}catch(e){}document.querySelectorAll('video').forEach(function(v){var x=v.currentSrc||v.src||'';if(/^https?:/i.test(x))A(x)});if(/hanime1?\./i.test(h)){var P=[];document.querySelectorAll('a[href]').forEach(function(a){if(/download|下载/i.test(a.href)||/download|下载/i.test(a.textContent||''))P.push(a.href)});try{var v=new URLSearchParams(location.search).get('v');if(v)P.push(location.origin+'/download?v='+v)}catch(e){}P.slice(0,3).forEach(function(u){try{var x=new XMLHttpRequest();x.open('GET',u,false);x.send();if(x.status>199&&x.status<300){var m,R=/https?:\/\/[^"'\s<>]*\.mp4[^"'\s<>]*/gi;while((m=R.exec(x.responseText)))A(m[0])}}catch(e){}})}function Q(u){var s=/playlist\.m3u8/i.test(u)?1e5:0,m=u.match(/(\d{3,4})p/i);if(m)s+=+m[1];if(/1080/.test(u))s=Math.max(s,1080);else if(/720/.test(u))s=Math.max(s,720);return s}c.sort(function(a,b){return Q(b)-Q(a)});var u=c[0]||'',M=u.match(/^(https?:\/\/surrit\.com\/[0-9a-f-]{36})\/(?:\d{3,4}p\/)?(?:video|playlist)\.m3u8(\?.*)?$/i);if(M)u=M[1]+'/playlist.m3u8'+(M[2]||'');if(!u){alert('没找到视频直链，先让视频播放几秒再试');return}var t='http://192.168.5.22:8765/api/quick-download?token=__TOKEN__&title='+encodeURIComponent((document.title||'').slice(0,150))+'&referer='+encodeURIComponent(location.href)+'&url='+encodeURIComponent(u);if(!window.open(t,'_blank'))location.href=t})();`;
 
 /** iOS 安装引导页：把书签代码直接呈现出来，复制即用 */
 function iosGuidePage() {
@@ -1053,16 +1178,19 @@ function iosGuidePage() {
   </div>
 
   <div class="card">
-    <h2>方案 B · 快捷指令（3 个动作，约 3 分钟）</h2>
+    <h2>方案 B · 快捷指令（2 个动作，约 2 分钟）</h2>
     <ol class="steps">
       <li><b>设置 → 快捷指令 → 打开「允许运行脚本」</b>（iOS 17/18 在「设置 → 快捷指令 → 高级」里）</li>
-      <li>打开「快捷指令」App → 右上角 <b>+</b> → 添加操作 → 搜索 <b>「在网页上运行 JavaScript」</b> → 把下面这段脚本<b>全部粘贴</b>进去</li>
-      <li>再添加操作 → 搜索 <b>「获取 URL 内容」</b> → URL 那一栏点一下，选键盘上方的<b>「JavaScript 在网页上运行」的结果</b>（方法保持 GET）</li>
+      <li>打开「快捷指令」App → 右上角 <b>+</b>，只保留两个动作：<br>
+        ① <b>接收</b>「Safari 浏览器」的<b>网页</b>输入（分享到本快捷指令时自动带进来）<br>
+        ② <b>「在网页上运行 JavaScript」</b> → 把下面这段脚本<b>全部粘贴</b>进去</li>
+      <li><b>不要再加「获取 URL 内容」</b>。脚本自己会把页面跳到服务器，并显示「已提交下载 · 进度」页，所以不会再出现「请确保传递了有效 URL」。<br>如果旧版快捷指令里还留着这个动作，<b>左滑删掉</b>；留着也不会重复下载（服务端 2 分钟内同地址只建一个任务）。</li>
       <li>点快捷指令名字改成 <b>视频下载</b>；点 <b>ⓘ</b> → 打开 <b>「在分享表单中显示」</b> → 接收类型勾 <b>URL</b> 和 <b>文本</b></li>
+      <li><b>务必在 Safari 的视频页里</b>点 <b>分享 → 视频下载</b> 运行。在「快捷指令」App 里点 ▶ 测试是无效的——那时前台是快捷指令自己，取不到网页，结果会是空的。</li>
     </ol>
     <textarea id="sc" readonly spellcheck="false">${escHtml(scJs)}</textarea>
     <button class="btn" type="button" onclick="cp2()">复制脚本</button>
-    <div class="warn">iOS 15+ 的 .shortcut 文件必须 Apple 签名才能导入（签名工具只在 macOS 上），所以只能按上面 3 步手动搭一次。</div>
+    <div class="warn">iOS 15+ 的 .shortcut 文件必须 Apple 签名才能导入（签名工具只在 macOS 上），所以只能手动搭一次。</div>
   </div>
 
   <div class="card">

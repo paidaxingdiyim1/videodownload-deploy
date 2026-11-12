@@ -32,6 +32,17 @@ function sanitizeFilename(name, maxLen = 110) {
   if (!s) s = 'video';
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(s)) s = '_' + s;
   if (s.length > maxLen) s = s.slice(0, maxLen).trim();
+  // 文件名上限是「字节」不是「字符」：中文 1 字 3 字节，110 字 ≈ 330 字节会 ENAMETOOLONG。
+  // 这里再按 UTF-8 字节压到 180，给「 - S01E01.mp4」等后缀留出余量。
+  const MAX_BYTES = 180;
+  if (Buffer.byteLength(s, 'utf8') > MAX_BYTES) {
+    let out = '';
+    for (const ch of s) {
+      if (Buffer.byteLength(out + ch, 'utf8') > MAX_BYTES) break;
+      out += ch;
+    }
+    s = out.trim();
+  }
   return s || 'video';
 }
 
