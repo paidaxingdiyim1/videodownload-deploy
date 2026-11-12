@@ -13,7 +13,7 @@ const util = require('./util');
 const cfdl = require('./cfdl');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.16';
+const VERSION = '1.5.17';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -601,6 +601,12 @@ const server = http.createServer(async (req, res) => {
       return res.end(mobilePage());
     }
 
+    /* ---- iOS 安装引导页：Safari 书签（Bookmarklet）一键装 ---- */
+    if (pathname === '/ios') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(iosGuidePage());
+    }
+
     if (pathname === '/api/download-file') {
       // 供用户从浏览器直接取回文件（可选）
       const file = url.searchParams.get('path');
@@ -950,6 +956,92 @@ function mobilePage() {
   refresh();
   setInterval(refresh, 1500);
 })();
+</script>
+</body></html>`;
+}
+
+/** Safari 书签（Bookmarklet）代码模板：__TOKEN__ 运行时替换成访问码 */
+const BM_TEMPLATE = String.raw`javascript:(function(){var h=location.hostname,c=[],S={};function A(u){u=String(u||'').trim();if(!/^https?:\/\//i.test(u)||/\.(ts|m4s|jpg|jpeg|png|gif|webp|css|js)(\?|$)/i.test(u)||S[u])return;S[u]=1;c.push(u)}try{performance.getEntriesByType('resource').forEach(function(e){var n=e.name||'';if(/\.m3u8(\?|$)/i.test(n)||/\.mp4(\?|$)/i.test(n))A(n)})}catch(e){}document.querySelectorAll('video').forEach(function(v){var x=v.currentSrc||v.src||'';if(/^https?:/i.test(x))A(x)});if(/hanime1?\./i.test(h)){var P=[];document.querySelectorAll('a[href]').forEach(function(a){if(/download|下载/i.test(a.href)||/download|下载/i.test(a.textContent||''))P.push(a.href)});try{var v=new URLSearchParams(location.search).get('v');if(v)P.push(location.origin+'/download?v='+v)}catch(e){}P.slice(0,3).forEach(function(u){try{var x=new XMLHttpRequest();x.open('GET',u,false);x.send();if(x.status>199&&x.status<300){var m,R=/https?:\/\/[^"'\s<>]*\.mp4[^"'\s<>]*/gi;while((m=R.exec(x.responseText)))A(m[0])}}catch(e){}})}function Q(u){var s=/playlist\.m3u8/i.test(u)?1e5:0,m=u.match(/(\d{3,4})p/i);if(m)s+=+m[1];if(/1080/.test(u))s=Math.max(s,1080);else if(/720/.test(u))s=Math.max(s,720);return s}c.sort(function(a,b){return Q(b)-Q(a)});var u=c[0]||'',M=u.match(/^(https?:\/\/surrit\.com\/[0-9a-f-]{36})\/(?:\d{3,4}p\/)?(?:video|playlist)\.m3u8(\?.*)?$/i);if(M)u=M[1]+'/playlist.m3u8'+(M[2]||'');if(!u){alert('没找到视频直链，先让视频播放几秒再试');return}var t='http://192.168.5.22:8765/api/quick-download?token=__TOKEN__&url='+encodeURIComponent(u);if(!window.open(t,'_blank'))location.href=t})();`;
+
+/** iOS 安装引导页：把书签代码直接呈现出来，复制即用 */
+function iosGuidePage() {
+  const bm = BM_TEMPLATE.replace('__TOKEN__', cfg.token);
+  return `<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>iPhone 安装</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f6f7f9;color:#1a1d21;padding-bottom:env(safe-area-inset-bottom)}
+  header{background:#fff;padding:16px 18px 12px;border-bottom:1px solid #eef0f3}
+  header h1{font-size:18px;margin:0}
+  header .sub{color:#6b7280;font-size:12.5px;margin-top:4px}
+  main{padding:14px}
+  .card{background:#fff;border-radius:14px;padding:15px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .card h2{font-size:15px;margin:0 0 10px;color:#111}
+  .steps{margin:0;padding-left:20px;font-size:14px}
+  .steps li{margin-bottom:9px;word-break:break-word}
+  .steps b{color:#2b6cff}
+  textarea{width:100%;height:120px;border:1px solid #dfe2e7;border-radius:10px;padding:9px 10px;font:11px/1.5 ui-monospace,Menlo,monospace;background:#fbfcfd;color:#374151;resize:vertical;margin-top:6px;word-break:break-all}
+  .btn{width:100%;border:0;border-radius:11px;padding:13px;font-size:16px;font-weight:600;color:#fff;background:#2b6cff;margin-top:10px}
+  .btn:active{opacity:.85}
+  .hint{color:#6b7280;font-size:13px;margin:0}
+  .warn{background:#fff7e6;border:1px solid #ffe0a3;color:#8a5b00;padding:10px 12px;border-radius:9px;font-size:13px;margin-top:10px}
+  code{background:#f2f3f5;padding:1px 5px;border-radius:4px;font-size:12px}
+  .toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:rgba(20,22,26,.92);color:#fff;padding:10px 16px;border-radius:10px;font-size:13.5px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:99}
+  .toast.show{opacity:1}
+</style></head>
+<body>
+<header>
+  <h1>iPhone 安装下载工具</h1>
+  <div class="sub">Safari 里点一下书签，自动识别当前页最高画质并下载</div>
+</header>
+<main>
+  <div class="card">
+    <h2>方案 A · Safari 书签（推荐，无需 Mac）</h2>
+    <ol class="steps">
+      <li>点最下方 <b>「复制代码」</b></li>
+      <li>Safari 随便打开一个网页 → <b>分享</b> → <b>添加到书签</b> → 保存（收藏夹选「个人收藏」）</li>
+      <li>打开书签列表 → <b>编辑</b> → 选中刚加的那条 → 名称改成 <b>视频下载</b>，网址栏<b>全选删掉、粘贴刚复制的代码</b> → 完成</li>
+      <li>以后在视频页：<b>让视频播 2~3 秒</b> → 点地址栏 → 个人收藏 → <b>视频下载</b></li>
+    </ol>
+    <textarea id="bm" readonly spellcheck="false">${bm.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+    <button class="btn" type="button" onclick="cp()">复制代码</button>
+    <div class="warn">代码里已内置访问码，请勿把这条书签分享给别人。</div>
+  </div>
+
+  <div class="card">
+    <h2>方案 B · 快捷指令（体验最好，需签名）</h2>
+    <p class="hint">iOS 15+ 的 <code>.shortcut</code> 文件必须经 Apple 签名才能导入，而签名工具只在 macOS 上有（Windows 无法生成）。有 Mac 的话可以用 <code>shortcuts sign</code> 签名后隔空投送；没有 Mac 就用手动配置（见 <code>ios/README.md</code>，4 步）。</p>
+  </div>
+
+  <div class="card">
+    <h2>能做什么</h2>
+    <p class="hint">
+      · <b>missav</b>：自动取 master 列表 → 最高 1080p<br>
+      · <b>hanime1</b>：自动抓「下载页」→ 各画质里选最高<br>
+      · 普通网页：读页面里的 video 直链<br>
+      · 手机和服务器要在同一 Wi-Fi；下载在服务器完成，进度看 <a href="/m">手机网页版</a>
+    </p>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(function(){t.classList.remove('show');},2200);}
+function cp(){
+  var t=document.getElementById('bm');
+  t.focus();t.select();
+  try{t.setSelectionRange(0,999999);}catch(e){}
+  var v=t.value;
+  function ok(){toast('已复制，去 书签 → 编辑 里粘贴');}
+  function fail(){toast('自动复制失败，请长按代码框手动全选复制');}
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(v).then(ok,fail);
+  }else{
+    try{document.execCommand('copy')?ok():fail();}catch(e){fail();}
+  }
+}
 </script>
 </body></html>`;
 }
