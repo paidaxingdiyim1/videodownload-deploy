@@ -913,6 +913,30 @@
     }
   }
 
+  /**
+   * hanime1 特化：站内「下载」页里列着 1080p/720p 直链。
+   * 这里同源 XHR 直接把那页读下来选最高画质，**不跳转、不新开标签页**——
+   * 因为一旦跳到下载页，标题就变成「下载 - Hanime1.me」，文件会被丢进另一个目录。
+   */
+  async function resolveHanime() {
+    try {
+      let vid = '';
+      try { vid = new URLSearchParams(location.search).get('v') || ''; } catch (_) {}
+      if (!vid) vid = (location.pathname.match(/\/(?:v|watch)\/(\d+)/) || [])[1] || '';
+      if (!vid) return null;
+      const r = await fetch(location.origin + '/download?v=' + vid, { credentials: 'include' });
+      if (!r.ok) return null;
+      const html = await r.text();
+      const urls = html.match(/https?:\/\/[^\s"'<>]*\.mp4[^\s"'<>]*/gi) || [];
+      if (!urls.length) return null;
+      const q = (u) => { const m = u.match(/(\d{3,4})p/i); return m ? parseInt(m[1], 10) : 0; };
+      urls.sort((a, b) => q(b) - q(a));
+      return { url: urls[0], kind: 'mp4' };
+    } catch (_) {
+      return null;
+    }
+  }
+
   async function startDownloadFor(video, rec, explicit, target) {
     const btn = rec ? rec.btn : null;
     if (!target) target = await chooseTarget(btn);
@@ -922,7 +946,8 @@
     const res = await send({ type: 'media:list' });
     if (res.ok) state.items = res.items || [];
 
-    const pick = explicit || pickTarget(video);
+    const isHanime = /hanime1?\./i.test(location.hostname);
+    const pick = explicit || (isHanime ? await resolveHanime() : null) || pickTarget(video);
     if (!pick || !pick.url) {
       if (rec) {
         setBtnState(rec, 'error', '没找到地址', '先点播放让视频加载几秒，再点下载');
