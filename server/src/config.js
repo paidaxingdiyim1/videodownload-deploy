@@ -47,8 +47,18 @@ const defaults = {
   concurrency: 6,
   /** 单个 HLS 任务的分片并发数 */
   segmentConcurrency: 8,
-  /** Cloudflare 站（cfdl 引擎）分片并发数。本机网络强可调高（实测本机 32 线程 ~20MB/s，服务器 12 线程 ~4.8MB/s） */
-  cfWorkers: 12,
+  /** Cloudflare 站（cfdl 引擎）分片并发数。实测服务器 12 线程 7.3MB/s、32 线程 14MB/s，取 24 折中 */
+  cfWorkers: 24,
+  /** 链路测速：Clash 里给代理流量用的分组名（TUN 模式下所有走代理的下载都吃它） */
+  proxyGroup: '良心云',
+  /** Clash mixed-port（测速时显式走这个 HTTP 代理，避免 fake-ip 干扰） */
+  proxyPort: 7897,
+  /** 测速用的下载地址（默认 Cloudflare 官方测速文件，取 8MB） */
+  netTestUrl: 'https://speed.cloudflare.com/__down?bytes=8000000',
+  /** Clash 控制接口：unix socket 留空自动探测；Windows 可填 http://127.0.0.1:9090 */
+  clashSocket: '',
+  clashApi: '',
+  clashSecret: '',
   /** 命名模板，支持 {title} {site} {date} {quality} {index} */
   namingTemplate: '{title}',
   /** 按站点分文件夹保存：downloads/<域名>/<文件> */

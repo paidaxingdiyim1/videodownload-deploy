@@ -101,13 +101,33 @@
     } catch (e) { return ''; }
   }
 
-  /* 4) H 站特化：抓下载页，把各画质 mp4 直链全捞出来 */
+  /* 4) H 站（hanime1）特化：
+        - 标题一律取「视频页」的标题（下载页的标题是「下载 - Hanime1.me」，
+          拿它当文件名会把同一部片子丢进另一个目录 —— 就是「下载后在不同文件夹」的原因）
+        - 直链优先用视频页里的（播放器 sources），取不到再用 XHR 读下载页，
+          全程不跳转、不新开标签页，避免「跳过去再点下载」导致链接/命名不一致 */
+  var pageTitle = '';
+  try { pageTitle = String(document.title || ''); } catch (e) {}
   if (/hanime1?\./i.test(host)) {
+    var vid = '';
+    try { vid = new URLSearchParams(location.search).get('v') || ''; } catch (e) {}
+    if (!vid) {
+      var mv = String(location.pathname).match(/\/(?:v|watch)\/([0-9]+)/);
+      if (mv) vid = mv[1];
+    }
+    // 当前不在视频页（例如已经站在下载页）→ 回视频页取标题 + 播放器直链
+    if (vid && !/\/watch/i.test(location.pathname)) {
+      var wh = fetchText(location.origin + '/watch?v=' + vid);
+      if (wh) {
+        var wt = wh.match(/<title>([\s\S]*?)<\/title>/i);
+        if (wt && wt[1]) pageTitle = wt[1];
+        var wm, WR = /https?:\/\/[^\s"'<>]*\.mp4[^\s"'<>]*/gi;
+        while ((wm = WR.exec(wh))) add(wm[0], 'watch-html');
+      }
+    }
+    // 下载页只用来「读」各画质直链，不导航
     var pages = dlPages.slice(0, 2);
-    try {
-      var vid = new URLSearchParams(location.search).get('v');
-      if (vid) pages.push(location.origin + '/download?v=' + vid);
-    } catch (e) {}
+    if (vid) pages.push(location.origin + '/download?v=' + vid);
     for (var t = 0; t < pages.length; t++) {
       var dh = fetchText(pages[t]);
       if (!dh) continue;
@@ -138,7 +158,7 @@
 
   var best = cands.length ? master(cands[0].u) : '';
   var title = '';
-  try { title = String(document.title || '').slice(0, 150); } catch (e) {}
+  try { title = String(pageTitle || document.title || '').slice(0, 150); } catch (e) {}
   var pageUrl = '';
   try { pageUrl = location.href; } catch (e) {}
 

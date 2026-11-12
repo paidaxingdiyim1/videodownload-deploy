@@ -130,8 +130,10 @@ class TaskStore {
     const uid = util.uid('dl');
     // 标题：扩展没给、或只给了「视频」这类占位词时，改从 URL 猜
     const rawTitle = String(input.title || '').trim();
-    const PLACEHOLDER = /^(视频|video|影片|媒体|media|player|播放|index)$/i;
-    const title = util.sanitizeFilename(!rawTitle || PLACEHOLDER.test(rawTitle) ? util.guessTitleFromUrl(input.url) : rawTitle);
+    const PLACEHOLDER = /^(视频|video|影片|媒体|media|player|播放|index|下载|download)$/i;
+    // 去掉「 - Hanime1.me」「 | MissAV」这类尾巴：否则同一个视频从下载页提交会跑到「下载」目录
+    const cleanedTitle = util.cleanTitle(rawTitle);
+    const title = util.sanitizeFilename(!cleanedTitle || PLACEHOLDER.test(cleanedTitle) ? util.guessTitleFromUrl(input.url) : cleanedTitle);
     const task = {
       id: uid,
       url: input.url,
@@ -139,7 +141,7 @@ class TaskStore {
       // 标题来源：client=扩展传来的真实标题（页面文案），guess=从 URL 猜的占位。
       // ytdlp 引擎只对 guess 标题做探测覆盖（yt-dlp 对 CDN 裸直链探测出的
       // title 就是文件名 media-video-hvc1 之类，会反过来顶掉正确标题）
-      titleSource: rawTitle && !PLACEHOLDER.test(rawTitle) ? 'client' : 'guess',
+      titleSource: cleanedTitle && !PLACEHOLDER.test(cleanedTitle) ? 'client' : 'guess',
       kind: input.kind || 'auto',
       mode: input.mode || 'auto',
       quality: input.quality || '',
@@ -261,7 +263,7 @@ class TaskStore {
           const info = await ytdlp.probe(task.url, { referer: task.referer });
           const TITLE_JUNK = /记录美好生活|^抖音[\s-]*$|^douyin[\s-]*$/i;
           if (info && info.title) {
-            const real = util.sanitizeFilename(info.title).trim();
+            const real = util.sanitizeFilename(util.cleanTitle(info.title)).trim();
             if (real && !TITLE_JUNK.test(real)) {
               task.title = real;
               this.emit('progress', this.snapshot(task));
@@ -343,7 +345,9 @@ class TaskStore {
   }
 
   buildFinalPath(cfg, task, ext) {
-    const site = (() => { try { return new URL(task.referer || task.url).hostname.replace(/^www\./, ''); } catch (_) { return ''; } })();
+    // 站点归一：missav.ai / missav.ws → missav，douyin.com → 抖音（同时决定 Jellyfin 媒体库）
+    const site = util.siteKey(task.referer || task.url)
+      || (() => { try { return new URL(task.referer || task.url).hostname.replace(/^www\./, ''); } catch (_) { return ''; } })();
     const d = new Date();
     const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
     let name;

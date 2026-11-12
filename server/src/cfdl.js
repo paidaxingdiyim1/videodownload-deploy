@@ -22,7 +22,7 @@ function download(task, ctx) {
     const tmpOut = ctx.tmpFile + '.cf.mp4';
     const srcUrl = toMasterPlaylist(task.url);
     if (srcUrl !== task.url && ctx.log) ctx.log('已切换到 master 播放列表（自动选最高画质）');
-    const args = [script, '--url', srcUrl, '--referer', task.referer || '', '--out', tmpOut, '--workers', String((ctx.config && ctx.config.cfWorkers) || 12)];
+    const args = [script, '--url', srcUrl, '--referer', task.referer || '', '--out', tmpOut, '--workers', String((ctx.config && ctx.config.cfWorkers) || 24)];
 
     let settled = false;
     const child = execFile(py, args, { timeout: 0, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {

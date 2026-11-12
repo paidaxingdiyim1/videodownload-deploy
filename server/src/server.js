@@ -11,9 +11,10 @@ const tasks = require('./tasks');
 const ytdlp = require('./ytdlp');
 const util = require('./util');
 const cfdl = require('./cfdl');
+const nettest = require('./nettest');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.25';
+const VERSION = '1.5.26';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -141,9 +142,11 @@ function moveUpload(from, to) {
 }
 
 async function finalizeUpload(up) {
-  const site = up.site || (() => { try { return new URL(up.referer || '').hostname.replace(/^www\./, ''); } catch (_) { return ''; } })();
+  const rawSite = up.site || (() => { try { return new URL(up.referer || '').hostname.replace(/^www\./, ''); } catch (_) { return ''; } })();
+  // 站点归一（missav.ai/.ws → missav），和任务下载走同一套目录规则
+  const site = util.siteKey(/^https?:/i.test(rawSite) ? rawSite : 'https://' + rawSite) || rawSite;
   let name = up.customName || up.title;
-  if (!up.customName) name = name.replace(/\s*[-–—]\s*[^-–—]*$/, '').trim(); // 去掉「- 站名」后缀
+  if (!up.customName) name = util.cleanTitle(name);
   name = util.sanitizeFilename(name) || 'video';
   const dir = cfg.siteFolders && site
     ? path.join(cfg.downloadDir, util.sanitizeFilename(site))
@@ -392,6 +395,31 @@ ${isMissav ? '<p class="tip">missav：确认视频正在播放（不是暂停/�
 ${isHanime ? '<p class="tip">hanime1：确认页面已完整加载，且页面上能看到「下载」入口。</p>' : ''}
 <p class="tip">把这一页截图发我，我能判断卡在哪一步。也可以先用 <a href="/m?token=${encodeURIComponent(cfg.token)}">手机网页版</a> 粘贴链接试试。</p>
 </div></body></html>`);
+    }
+
+    /* ---- 链路测速：当前节点 / 测速 / 切节点 ---- */
+    if (pathname === '/api/net/status' && req.method === 'GET') {
+      try { return send(res, 200, await nettest.status(), cors); }
+      catch (e) { return send(res, 200, { ok: false, available: false, error: e.message }, cors); }
+    }
+    if (pathname === '/api/net/test' && req.method === 'POST') {
+      let body = {};
+      try { body = await readBody(req); } catch (_) {}
+      try {
+        const st = await nettest.test({
+          group: body.group, top: body.top, bytes: body.bytes, url: body.url, auto: !!body.auto,
+        });
+        return send(res, 200, { ok: true, ...st }, cors);
+      } catch (e) {
+        return send(res, 200, { ok: false, error: e.message }, cors);
+      }
+    }
+    if (pathname === '/api/net/select' && req.method === 'POST') {
+      let body = {};
+      try { body = await readBody(req); } catch (_) {}
+      if (!body.node) return send(res, 400, { ok: false, error: '缺少 node' }, cors);
+      try { return send(res, 200, { ok: true, ...(await nettest.apply(body.node, body.group)) }, cors); }
+      catch (e) { return send(res, 200, { ok: false, error: e.message }, cors); }
     }
 
     /* ---- 新建下载 ---- */
@@ -660,6 +688,12 @@ ${isHanime ? '<p class="tip">hanime1：确认页面已完整加载，且页面�
       return res.end(iosGuidePage());
     }
 
+    /* ---- 链路测速 / 批量下载页 ---- */
+    if (pathname === '/speed' || pathname === '/links') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(speedPage());
+    }
+
     if (pathname === '/api/download-file') {
       // 供用户从浏览器直接取回文件（可选）
       const file = url.searchParams.get('path');
@@ -851,6 +885,228 @@ ${isPage ? `<p>刚才提交的是页面地址：<br><code>${esc(data.url)}</code
 </body></html>`;
 }
 
+/** 链路测速页（/speed）：测代理节点真实带宽 → 选最快的那条用于下载 */
+function speedPage() {
+  return `<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>链路测速 · 视频下载</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font:15px/1.55 -apple-system,"SF Pro SC","PingFang SC","Microsoft YaHei",sans-serif;background:#f6f7f9;color:#1a1d21;padding-bottom:40px}
+  header{background:#fff;padding:15px 18px 12px;border-bottom:1px solid #eef0f3;position:sticky;top:0;z-index:10}
+  header h1{font-size:18px;margin:0;display:flex;align-items:center;gap:8px}
+  header .dot{width:8px;height:8px;border-radius:50%;background:#12a150;flex:none}
+  header .sub{color:#6b7280;font-size:12.5px;margin-top:4px}
+  main{padding:14px 14px 40px;max-width:760px;margin:0 auto}
+  .card{background:#fff;border-radius:14px;padding:14px 15px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .card h2{font-size:14px;margin:0 0 10px;color:#374151;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .card h2 .n{color:#9aa0a6;font-weight:400;font-size:12px}
+  textarea,input[type=text]{width:100%;border:1px solid #dfe2e7;border-radius:10px;padding:10px 12px;font-size:15px;font-family:inherit;outline:none;background:#fbfcfd;color:#1a1d21}
+  textarea{min-height:76px;resize:vertical}
+  textarea:focus,input:focus{border-color:#2b6cff;background:#fff}
+  .btn{width:100%;border:0;border-radius:11px;padding:13px;font-size:16px;font-weight:600;color:#fff;background:#2b6cff;margin-top:10px;cursor:pointer}
+  .btn:disabled{background:#b9c6e8;cursor:default}
+  .btn.ghost{background:#eef3ff;color:#2b6cff;font-size:14px;padding:9px}
+  .hint{color:#9aa0a6;font-size:12px;margin-top:8px}
+  .now{font-size:17px;font-weight:600;word-break:break-all}
+  .row2{display:flex;gap:10px;margin-top:10px}
+  .row2 label{flex:1;font-size:12.5px;color:#6b7280}
+  .row2 input{width:100%;border:1px solid #dfe2e7;border-radius:9px;padding:8px 10px;font-size:14px;margin-top:4px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:8px 4px;border-bottom:1px solid #f2f3f5;vertical-align:middle}
+  th{color:#9aa0a6;font-weight:500;font-size:12px}
+  td.sp{font-weight:600;color:#12a150;white-space:nowrap}
+  td.lat{color:#6b7280;white-space:nowrap}
+  .node{word-break:break-all}
+  .use{border:1px solid #dfe2e7;background:#fff;color:#2b6cff;border-radius:8px;padding:5px 10px;font-size:12.5px;cursor:pointer}
+  .use.cur{background:#eef3ff;border-color:#cddcff}
+  .empty{color:#9aa0a6;font-size:13px;text-align:center;padding:16px 0}
+  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:rgba(20,22,26,.92);color:#fff;padding:10px 16px;border-radius:10px;font-size:13.5px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:99;max-width:88vw;text-align:center}
+  .toast.show{opacity:1}
+</style></head>
+<body>
+<header>
+  <h1><span class="dot"></span>链路测速</h1>
+  <div class="sub" id="sub">读取节点中…</div>
+</header>
+<main>
+  <div class="card" id="tokenCard" style="display:none">
+    <h2>访问码</h2>
+    <input type="text" id="tokenInput" placeholder="粘贴服务端 Token" autocapitalize="off" spellcheck="false">
+    <button class="btn" id="saveToken" type="button">确定</button>
+  </div>
+
+  <div class="card">
+    <h2>当前线路 <span class="n" id="grp"></span></h2>
+    <div class="now" id="now">—</div>
+    <div class="hint">下载走 Clash 的 <b id="grpName">良心云</b> 分组（TUN 模式全量代理），这里选哪条，下载就用哪条。</div>
+    <div class="row2">
+      <label>深度测速节点数<input id="top" type="number" value="8" min="1" max="30"></label>
+      <label>每个节点下（MB）<input id="mb" type="number" value="6" min="1" max="30"></label>
+    </div>
+    <button class="btn" id="test" type="button">开始测速</button>
+    <div class="hint">先测全部节点延迟 → 取最快的几个逐个切过去真下数据。测速期间其他走代理的流量会短暂受影响，结束后自动还原。</div>
+  </div>
+
+  <div class="card">
+    <h2>测速结果 <span class="n" id="took"></span></h2>
+    <div id="res"><div class="empty">还没有测过</div></div>
+  </div>
+
+  <div class="card">
+    <h2>批量下载 <span class="n">一行一个链接</span></h2>
+    <textarea id="batch" placeholder="https://hanime1.me/watch?v=38054&#10;https://missav.ws/dm30/cn/lulu-271-uncensored-leak&#10;……"></textarea>
+    <button class="btn" id="go" type="button">全部提交</button>
+    <div class="hint">按服务器并发数自动排队；提交后可以关掉这一页，下载在服务器继续。</div>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  var TOKEN_KEY = 'wvd_token';
+  var token = '';
+  try { token = new URLSearchParams(location.search).get('token') || ''; } catch (e) {}
+  if (token) { try { localStorage.setItem(TOKEN_KEY, token); } catch (e) {} }
+  else { try { token = localStorage.getItem(TOKEN_KEY) || ''; } catch (e) {} }
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function toast(m) {
+    var t = $('toast');
+    t.textContent = m;
+    t.classList.add('show');
+    clearTimeout(t._h);
+    t._h = setTimeout(function () { t.classList.remove('show'); }, 2400);
+  }
+  function api(path, body) {
+    var sep = path.indexOf('?') >= 0 ? '&' : '?';
+    var url = path + sep + 'token=' + encodeURIComponent(token);
+    var opt = body ? {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    } : {};
+    return fetch(url, opt).then(function (r) { return r.json(); });
+  }
+  function showToken(on) { $('tokenCard').style.display = on ? '' : 'none'; }
+  $('saveToken').onclick = function () {
+    token = $('tokenInput').value.trim();
+    try { localStorage.setItem(TOKEN_KEY, token); } catch (e) {}
+    showToken(false); load();
+  };
+
+  function render(st, curNode) {
+    $('grp').textContent = st.group || '';
+    $('grpName').textContent = st.group || '良心云';
+    $('now').textContent = st.applied || st.now || '未知';
+    if (st.now) $('sub').textContent = '当前：' + st.now + (st.all ? ' · 共 ' + st.all + ' 个节点' : '');
+    var links = (st.links && st.links.length) ? st.links : ((st.last && st.last.links) || []);
+    $('took').textContent = st.at ? new Date(st.at).toLocaleTimeString('zh-CN', { hour12: false }) : '';
+    if (!links.length) return;
+    var h = '<table><tr><th>线路</th><th>延迟</th><th>速度</th><th></th></tr>';
+    for (var i = 0; i < links.length; i++) {
+      var l = links[i];
+      var cur = (l.node === curNode) || (l.node === st.now);
+      h += '<tr><td class="node">' + esc(l.node) + '</td>'
+        + '<td class="lat">' + (l.delay > 0 ? l.delay + 'ms' : '—') + '</td>'
+        + '<td class="sp">' + (l.speed > 0 ? l.speed.toFixed(2) + ' MB/s' : (l.error ? '失败' : '—')) + '</td>'
+        + '<td><button class="use' + (cur ? ' cur' : '') + '" data-node="' + esc(l.node) + '">' + (cur ? '当前' : '用这条') + '</button></td></tr>';
+    }
+    h += '</table>';
+    if (links[0] && links[0].speed > 0) {
+      h += '<div class="hint">最快：<b>' + esc(links[0].node) + '</b> · ' + links[0].speed.toFixed(2) + ' MB/s</div>';
+    }
+    var box = $('res');
+    box.innerHTML = h;
+    var btns = box.querySelectorAll('.use');
+    for (var k = 0; k < btns.length; k++) {
+      btns[k].onclick = function () {
+        var node = this.getAttribute('data-node');
+        this.disabled = true;
+        api('/api/net/select', { node: node }).then(function (r) {
+          if (r.ok) { toast('已切换到 ' + node); load(); }
+          else toast(r.error || '切换失败');
+        }).catch(function () { toast('切换失败'); });
+      };
+    }
+  }
+
+  function load() {
+    api('/api/net/status').then(function (r) {
+      if (r.available === false) {
+        $('sub').textContent = '未检测到 Clash 控制接口：' + (r.error || '');
+        $('now').textContent = '不可用';
+        $('test').disabled = true;
+        return;
+      }
+      render(r, '');
+    }).catch(function () { showToken(!token); });
+  }
+
+  $('test').onclick = function () {
+    var btn = this;
+    btn.disabled = true;
+    var t0 = Date.now();
+    btn.textContent = '测速中…（约 ' + Math.max(10, Number($('top').value) * 8) + ' 秒）';
+    $('sub').textContent = '正在逐个切换节点测速，请稍等…';
+    api('/api/net/test', {
+      top: Number($('top').value) || 8,
+      bytes: Number($('mb').value) || 6,
+      auto: false
+    }).then(function (r) {
+      btn.disabled = false;
+      btn.textContent = '重新测速';
+      if (!r.ok) { toast(r.error || '测速失败'); $('sub').textContent = r.error || '测速失败'; return; }
+      render(r, '');
+      var secs = Math.round((Date.now() - t0) / 1000);
+      $('sub').textContent = '测速完成 · 用了 ' + secs + ' 秒 · 已还原原节点';
+      toast('测速完成');
+    }).catch(function () {
+      btn.disabled = false;
+      btn.textContent = '重新测速';
+      toast('测速失败');
+    });
+  };
+
+  $('go').onclick = function () {
+    var lines = String($('batch').value || '').split(/\\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
+    if (!lines.length) return toast('先贴几个链接');
+    var btn = this;
+    btn.disabled = true;
+    var n = 0, fail = 0, idx = 0;
+    function next() {
+      if (idx >= lines.length) {
+        btn.disabled = false;
+        toast('已提交 ' + n + ' 个' + (fail ? '，失败 ' + fail + ' 个' : ''));
+        return;
+      }
+      var raw = lines[idx++];
+      var i = raw.indexOf('http');
+      var u = i >= 0 ? raw.slice(i).split(/[\\s，。、）)】]/)[0] : '';
+      if (!u) { fail++; return next(); }
+      fetch('/api/download?token=' + encodeURIComponent(token), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: u })
+      }).then(function (r) { return r.json(); })
+        .then(function (r) { if (r.ok) n++; else fail++; next(); })
+        .catch(function () { fail++; next(); });
+    }
+    next();
+  };
+
+  if (!token) showToken(true);
+  load();
+})();
+</script>
+</body></html>`;
+}
+
 function mimeFor(file) {
   const map = {
     '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mkv': 'video/x-matroska',
@@ -884,6 +1140,7 @@ function dashboardPage(tools) {
   <div class="row"><span>yt-dlp</span><span>${dot(tools.ytdlp.ok)}${tools.ytdlp.ok ? tools.ytdlp.version : '未安装（复杂站点需要）'}</span></div>
   <div class="row"><span>ffmpeg</span><span>${dot(tools.ffmpeg.ok)}${tools.ffmpeg.ok ? '已安装（可合并音视频/转 MP4）' : '未安装（HLS 会保存为 .ts）'}</span></div>
   <div class="row"><span>并发 / 分片并发</span><span>${cfg.concurrency} / ${cfg.segmentConcurrency}</span></div>
+  <div class="row"><span>链路测速 / 批量下载</span><code><a href="/speed?token=${cfg.token}" target="_blank">/speed</a>（测代理节点真实带宽，选最快的下载）</code></div>
   <div class="row"><span>API</span><code>GET /api/tasks · GET /api/files · POST /api/download · GET /api/events</code></div>
   ${tools.ytdlp.ok && tools.ffmpeg.ok ? '' : '<div class="warn">建议运行 <code>setup.bat</code> 安装 yt-dlp 与 ffmpeg，可支持更多站点并自动合并音视频。</div>'}
   <div class="warn">请只下载你有权保存的内容，并遵守目标网站的服务条款与相关法律。</div>

@@ -46,8 +46,7 @@ function sanitizeFilename(name, maxLen = 110) {
   return s || 'video';
 }
 
-/** 从 URL 猜一个还行的标题（扩展未提供标题时的兜底） */
-function guessTitleFromUrl(u) {
+/** 从 URL 猜一个还行的标题（扩展未提供标题时的兜底） */function guessTitleFromUrl(u) {
   try {
     const url = new URL(u);
     const base = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || '');
@@ -59,6 +58,48 @@ function guessTitleFromUrl(u) {
   } catch (_) {
     return 'video';
   }
+}
+
+/* ---------------- 站点/标题归一 ---------------- */
+
+/**
+ * 站点标识（同时用作下载目录名、Jellyfin 媒体库名）
+ * 同一个站的不同镜像/域名统一成一个名字，避免「missav.ai / missav.ws」分到两个文件夹，
+ * 下载方式不一致时也不会再出现「同一部片子散落在不同目录」。
+ */
+function siteKey(u) {
+  let host = '';
+  try { host = new URL(u || '').hostname.toLowerCase().replace(/^www\./, ''); } catch (_) { return ''; }
+  if (!host) return '';
+  if (/missav/.test(host)) return 'missav';
+  if (/hanime1/.test(host)) return 'hanime1';
+  if (/(douyin|iesdouyin|amemv)/.test(host)) return '抖音';
+  if (/(bilibili|b23\.tv|bilivideo|hdslb)/.test(host)) return 'bilibili';
+  if (/kuaishou/.test(host)) return 'kuaishou';
+  if (/weibo/.test(host)) return 'weibo';
+  if (/(youtube|youtu\.be|googlevideo)/.test(host)) return 'youtube';
+  if (/(^|\.)x\.com$|twitter/.test(host)) return 'twitter';
+  if (/(hanime|hembed)/.test(host)) return 'hanime1';
+  return host;
+}
+
+/** 去掉标题末尾的站名/域名尾巴（「标题 - Hanime1.me」「标题 | MissAV」），统一命名 */
+function cleanTitle(t) {
+  let s = String(t == null ? '' : t)
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .trim();
+  if (!s) return '';
+  const BRAND = /\s*[-–—|｜·•:：]\s*(?:miss\s?av|missav[a-z0-9.]*|hanime1(?:\.me|\.com)?|javbus|javdb|dmm|fanza|在线观看|免費視頻|免费视频|线上看)\s*$/i;
+  // 末尾是「- xxx.com / xxx.ws / xxx.me / xxx.ai …」这种纯域名时也去掉
+  const DOMAIN = /\s*[-–—|｜·•]\s*[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\s*)$/i;
+  let prev;
+  do {
+    prev = s;
+    s = s.replace(BRAND, '').replace(DOMAIN, '').trim();
+  } while (s && s !== prev);
+  s = s.replace(/^(?:在线观看|免費視頻|免费视频)\s*[-–—|｜:：]\s*/i, '');
+  s = s.replace(/\s{2,}/g, ' ').trim();
+  return s;
 }
 
 /* ---------------- m3u8 解析 ---------------- */
@@ -234,6 +275,8 @@ module.exports = {
   formatDuration,
   sanitizeFilename,
   guessTitleFromUrl,
+  siteKey,
+  cleanTitle,
   absUrl,
   parseAttributes,
   parseM3U8,
