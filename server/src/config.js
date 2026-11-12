@@ -44,9 +44,9 @@ const defaults = {
   token: '',
   downloadDir: path.join(ROOT, 'downloads'),
   /** 同时下载的任务数 */
-  concurrency: 2,
+  concurrency: 6,
   /** 单个 HLS 任务的分片并发数 */
-  segmentConcurrency: 6,
+  segmentConcurrency: 8,
   /** Cloudflare 站（cfdl 引擎）分片并发数。本机网络强可调高（实测本机 32 线程 ~20MB/s，服务器 12 线程 ~4.8MB/s） */
   cfWorkers: 12,
   /** 命名模板，支持 {title} {site} {date} {quality} {index} */
@@ -134,4 +134,15 @@ function resolvePython() {
   return process.platform === 'win32' ? 'python' : 'python3';
 }
 
-module.exports = { load, save, update, ROOT, SEA_MODE, CONFIG_PATH, BIN_DIR, defaults, isLanBind, resolvePython };
+/** 找到可用的 curl（优先项目自带，其次系统命令）；找不到返回空串 */
+function resolveCurl() {
+  const name = process.platform === 'win32' ? 'curl.exe' : 'curl';
+  const cands = [path.join(BIN_DIR, name)];
+  for (const p of cands) {
+    try { if (fs.existsSync(p)) return p; } catch (_) {}
+  }
+  // 系统 curl：Windows 10+ 自带，Linux/macOS 基本都有
+  return name;
+}
+
+module.exports = { load, save, update, ROOT, SEA_MODE, CONFIG_PATH, BIN_DIR, defaults, isLanBind, resolvePython, resolveCurl };
