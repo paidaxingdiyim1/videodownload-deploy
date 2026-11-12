@@ -5,8 +5,26 @@ const fs = require('fs');
 /**
  * 普通直链下载（mp4 / webm / flv / m4a ...）
  * 支持断点续传（服务端支持 Range 时）与实时进度。
+ * 若中途临时文件被外部删除（rename 报 ENOENT），自动从头重下一次。
  */
 async function download(task, ctx) {
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await downloadOnce(task, ctx);
+    } catch (e) {
+      lastErr = e;
+      const msg = String((e && (e.code || e.message)) || '');
+      if (ctx.signal.aborted || !/ENOENT/.test(msg)) throw e;
+      ctx.log && ctx.log('临时文件意外丢失，重下一次…');
+      try { fs.unlinkSync(ctx.tmpFile + '.part'); } catch (_) {}
+      await new Promise((r) => setTimeout(r, 800));
+    }
+  }
+  throw lastErr;
+}
+
+async function downloadOnce(task, ctx) {
   const partPath = ctx.tmpFile + '.part';
   let start = 0;
   try { start = fs.statSync(partPath).size; } catch (_) {}
@@ -54,6 +72,11 @@ async function download(task, ctx) {
     await new Promise((r) => out.end(r));
   }
 
+  if (!fs.existsSync(partPath)) {
+    const e = new Error('临时文件被外部删除（' + partPath + '）');
+    e.code = 'ENOENT';
+    throw e;
+  }
   fs.renameSync(partPath, ctx.tmpFile);
   ctx.report({ progress: 100, downloaded, total: total || downloaded, speed: 0, eta: 0 });
   return { file: ctx.tmpFile, ext: guessExt(task.url, res.headers.get('content-type')) };

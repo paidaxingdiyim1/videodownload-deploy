@@ -13,7 +13,7 @@ const util = require('./util');
 const cfdl = require('./cfdl');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.23';
+const VERSION = '1.5.24';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');

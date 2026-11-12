@@ -520,11 +520,12 @@ function cleanupTmp(tmpBase, keep) {
   const base = path.basename(tmpBase);
   try {
     for (const f of fs.readdirSync(dir)) {
-      if (f.startsWith(base)) {
-        const full = path.join(dir, f);
-        if (keep && full === keep) continue;
-        try { fs.unlinkSync(full); } catch (_) {}
-      }
+      // 只删「本任务」的产物：<id>、<id>.part、<id>.audio…，不能用裸前缀
+      // （裸 startsWith 在 id 互为前缀时会误删别的任务正在写的分片，导致 rename ENOENT）
+      if (f !== base && !f.startsWith(base + '.')) continue;
+      const full = path.join(dir, f);
+      if (keep && full === keep) continue;
+      try { fs.unlinkSync(full); } catch (_) {}
     }
   } catch (_) {}
 }
