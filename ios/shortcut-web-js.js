@@ -155,13 +155,15 @@
       + '&r=' + resN + '&c=' + cands.length + '&v=' + vidN;
   }
 
-  // 先把结果交回快捷指令（部分 iOS 必须），再打开页面看进度
+  // 顺序很重要：
+  // 1) 先尝试新标签页打开提交地址（当前网页保留，能继续下别的）
+  // 2) 再把地址交回快捷指令（部分 iOS 必须调 completion，否则报「必须调用 completion」）
+  // 3) 实在开不了新标签才跳转当前页（此时结果已经交回，不会影响快捷指令）
+  var opened = null;
+  try { opened = window.open(target, '_blank'); } catch (e) { opened = null; }
   try { fin(target); } catch (e) {}
-  try {
-    var w = window.open(target, '_blank');
-    if (!w) location.href = target;
-  } catch (e) {
-    try { location.href = target; } catch (e2) {}
+  if (!opened) {
+    try { location.href = target; } catch (e) {}
   }
   return target;
 })();
