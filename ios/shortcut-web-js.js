@@ -13,6 +13,10 @@
 // 返回：最优直链（纯文本）；找不到返回空字符串
 // ============================================================
 (function () {
+  // 服务器地址与访问码（与 server/config.json 的 token 一致）
+  var SERVER = 'http://192.168.5.22:8765';
+  var TOKEN = 'c3be1b59181e341893900bdaaf87e56a';
+
   var host = location.hostname;
   var cands = [];   // { u, tag }
   var seen = {};
@@ -106,6 +110,11 @@
   }
   cands.sort(function (a, b) { return score(b.u) - score(a.u); });
 
-  if (!cands.length) return '';
-  return toMaster(cands[0].u);
+  var best = cands.length ? toMaster(cands[0].u) : '';
+  if (!best) {
+    try { alert('没找到视频直链：先让视频播放 2~3 秒再运行'); } catch (e) {}
+    return '';
+  }
+  // 直接返回「提交下载」的完整 URL —— 快捷指令只需接「获取 URL 内容」一步
+  return SERVER + '/api/quick-download?token=' + TOKEN + '&url=' + encodeURIComponent(best);
 })();
