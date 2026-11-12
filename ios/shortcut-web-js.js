@@ -21,6 +21,15 @@
   var cands = [];   // { u, tag }
   var seen = {};
 
+  // iOS 快捷指令要求脚本必须调用 completion(result) 才算完成；
+  // 普通浏览器里没有该函数，则退回 return 值（便于调试）
+  function done(v) {
+    if (typeof completion === 'function') {
+      try { completion(v); } catch (e) {}
+    }
+    return v;
+  }
+
   function add(u, tag) {
     u = String(u || '').trim();
     if (!u || !/^https?:\/\//i.test(u)) return;
@@ -113,8 +122,8 @@
   var best = cands.length ? toMaster(cands[0].u) : '';
   if (!best) {
     try { alert('没找到视频直链：先让视频播放 2~3 秒再运行'); } catch (e) {}
-    return '';
+    return done('');
   }
-  // 直接返回「提交下载」的完整 URL —— 快捷指令只需接「获取 URL 内容」一步
-  return SERVER + '/api/quick-download?token=' + TOKEN + '&url=' + encodeURIComponent(best);
+  // 返回「提交下载」的完整 URL —— 快捷指令只需接「获取 URL 内容」一步
+  return done(SERVER + '/api/quick-download?token=' + TOKEN + '&url=' + encodeURIComponent(best));
 })();
