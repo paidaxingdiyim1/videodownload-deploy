@@ -9,13 +9,6 @@ const dash = require('./dash');
 const direct = require('./direct');
 const ytdlp = require('./ytdlp');
 const cfdl = require('./cfdl');
-const organize = require('./organize');
-
-/**
- * 「一个站一个媒体库」的站点：目录平铺，不建 <剧名>/Season XX 结构。
- * 原因：这类站大多是单集视频，Jellyfin 用「电影」库最直观；建了 Season 目录反而扫不到。
- */
-const FLAT_SITES = new Set(['missav', 'hanime1', '抖音']);
 
 /* ------------------------------------------------------------------ */
 /*  网络请求封装：带 Referer / Cookie / UA / 重试                       */
@@ -317,22 +310,6 @@ class TaskStore {
       moveFile(result.file, finalPath);
       cleanupTmp(tmpFile, finalPath);
 
-      // 标题整理（可选项）：识别剧集 → 番剧/电视剧库 + nfo；失败不阻塞下载
-      if (cfg.organize && cfg.organize.enabled) {
-        try {
-          const site = util.siteKey(task.referer || task.url) || path.basename(path.dirname(finalPath));
-          const r = organize.place(cfg, { title: task.title, site, filePath: finalPath, ext: result.ext });
-          if (r.moved) {
-            finalPath = r.moved;
-            this.log(task, `标题整理：${r.note}`);
-          } else if (r.nfo) {
-            this.log(task, '标题整理：已写入 nfo 元数据');
-          }
-        } catch (e) {
-          this.log(task, '标题整理失败（保留原文件）：' + e.message);
-        }
-      }
-
       task.status = 'done';
       task.stage = 'done';
       task.progress = 100;
@@ -393,27 +370,6 @@ class TaskStore {
         name = [site || 'video', date, String(task.seq).padStart(3, '0')].filter(Boolean).join('_');
       }
     }
-    // 剧集识别：有剧名 + 集数的，按 Jellyfin 标准剧集结构落盘
-    //   downloads/<站点>/<剧名>/Season XX/<剧名> - SXXEXX.ext
-    // 例外：missav / hanime1 / 抖音 是「一个站一个库」，库里基本都是单集视频，
-    // 建 Season 目录反而会让「电影」类型库看不到，所以这三个站一律平铺。
-    const ep = FLAT_SITES.has(site) ? null : parseEpisode(name);
-    if (ep && ep.show && ep.episode > 0) {
-      const show = util.sanitizeFilename(ep.show);
-      const season = String(ep.season || 1).padStart(2, '0');
-      const epNum = String(ep.episode).padStart(2, '0');
-      const base = `${show} - S${season}E${epNum}`;
-      const baseDir = cfg.siteFolders && site
-        ? path.join(cfg.downloadDir, util.sanitizeFilename(site))
-        : cfg.downloadDir;
-      const dir = path.join(baseDir, show, `Season ${season}`);
-      fs.mkdirSync(dir, { recursive: true });
-      let candidate = path.join(dir, `${base}.${ext}`);
-      let n = 1;
-      while (fs.existsSync(candidate)) candidate = path.join(dir, `${base} (${n++}).${ext}`);
-      return candidate;
-    }
-
     name = util.sanitizeFilename(name);
     // 按站点分文件夹
     const dir = cfg.siteFolders && site
@@ -458,57 +414,6 @@ function taskFileLog(task, event, extra) {
     const line = `[${new Date().toLocaleString('zh-CN', { hour12: false })}] ${event} id=${task.id} "${task.title}" kind=${task.kind} engine=${task.engine || '-'} audioUrl=${task.audioUrl ? 'yes' : 'no'} cookies=${cookies} customName=${task.customName || '-'} url=${task.url}${extra ? ' | ' + extra : ''}\n`;
     fs.appendFileSync(path.join(dir, 'tasks.log'), line, 'utf8');
   } catch (_) {}
-}
-
-/** 中文数字转阿拉伯（一~九十九、百） */
-function cnToInt(s) {
-  s = String(s || '').trim();
-  if (/^\d+$/.test(s)) return parseInt(s, 10);
-  const CN = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
-  if (s.length === 1) return CN[s] != null ? CN[s] : 0;
-  if (s === '十') return 10;
-  if (s.includes('十')) {
-    const parts = s.split('十');
-    return (parts[0] ? (CN[parts[0]] || 0) : 1) * 10 + (parts[1] ? (CN[parts[1]] || 0) : 0);
-  }
-  if (s.includes('百')) {
-    const parts = s.split('百');
-    return (parts[0] ? (CN[parts[0]] || 1) : 1) * 100 + (parts[1] ? (CN[parts[1]] || 0) : 0);
-  }
-  return 0;
-}
-
-/** 从标题解析剧集：返回 {show, season, episode} 或 null（无剧名/集数则不归集） */
-function parseEpisode(title) {
-  const t = String(title || '').trim();
-  if (!t) return null;
-  let m = t.match(/[Ss](\d{1,2})\s*[Ee](\d{1,3})/);
-  if (m) {
-    const show = t.slice(0, t.indexOf(m[0])).replace(/[《》「」【】\[\]#·\s]+/g, ' ').trim();
-    return { show, season: parseInt(m[1], 10), episode: parseInt(m[2], 10) };
-  }
-  m = t.match(/[Ee][Pp]\s*(\d{1,3})/);
-  if (m) {
-    const show = t.replace(m[0], '').replace(/[《》「」【】\[\]#·\s]+/g, ' ').trim();
-    return { show, season: 1, episode: parseInt(m[1], 10) };
-  }
-  // 「第X集」匹配要跳过「更新至第X集/更新到第X集/共X集/全X集」——那些说的是
-  // 剧集最新进度/总集数，不是当前集（如影视站 title「剧名 - 更新至第06集 …」）
-  const epRe = /第\s*([0-9]+|[零一二两三四五六七八九十百]+)\s*[集话期]/g;
-  let em;
-  while ((em = epRe.exec(t))) {
-    const pre = t.slice(Math.max(0, em.index - 3), em.index);
-    if (/[至到]$|共$|全$/.test(pre)) continue;
-    const before = t.slice(0, em.index);
-    // 剧名：优先书名号内容，否则取「第X集」前的文字（去标签/标点）
-    let show = '';
-    const book = before.match(/《([^》]{1,40})》/);
-    if (book) show = book[1].trim();
-    else show = before.replace(/#\s*[^\s#]+/g, ' ').replace(/[【】\[\]「」·、，。！？!?:：;；'"‘’“”\s]+/g, ' ').trim();
-    const ep = cnToInt(em[1]);
-    if (ep > 0 && show) return { show: show.slice(0, 60), season: 1, episode: ep };
-  }
-  return null;
 }
 
 /** 判断是否为 Cloudflare 强防护的 m3u8（surrit 等），这类站 Node/yt-dlp 都会被 403 */

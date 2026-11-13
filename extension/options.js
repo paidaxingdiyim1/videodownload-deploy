@@ -394,48 +394,7 @@ async function openSpeed(target) {
   chrome.tabs.create({ url: speedUrl(target) });
 }
 
-/* ------------------------------ AI 一键整理 ------------------------------ */
-
-async function organizeAI() {
-  const el = $('#organize-ai-result');
-  const box = $('#organize-ai-plan');
-  el.className = 'result';
-  el.textContent = '整理中（AI 识别较慢，请稍候）…';
-  const r = await send({ type: 'organize:ai', target: 'server' });
-  if (!r) {
-    el.className = 'result bad';
-    el.textContent = '服务未连接，请先在「本机服务」里测试连接';
-    return;
-  }
-  if (r.ok) {
-    el.className = 'result ok';
-    const parts = [
-      '整理完成',
-      r.aiModel ? `模型 ${r.aiModel}` : '',
-      r.total ? `处理 ${r.total} 个` : '',
-      r.moved ? `移动 ${r.moved} 个到剧集库` : '',
-      r.nfo ? `写 ${r.nfo} 个 nfo` : '',
-      r.errors && r.errors.length ? `${r.errors.length} 个失败` : '',
-    ].filter(Boolean);
-    el.textContent = parts.join(' · ');
-    if (r.note) {
-      box.hidden = false;
-      box.textContent = r.note + (r.errors && r.errors.length ? '\n\n失败项：\n' + r.errors.join('\n') : '');
-    } else {
-      box.hidden = true;
-    }
-  } else {
-    el.className = 'result bad';
-    el.textContent = '整理失败：' + ((r && r.error) || '未知错误');
-    if (r.error) {
-      box.hidden = false;
-      box.textContent = r.error;
-    }
-  }
-}
-
 $('#save').addEventListener('click', save);
-$('#organizeAI').addEventListener('click', organizeAI);
 $('#speedServer').addEventListener('click', () => openSpeed('server'));
 $('#speedLocal').addEventListener('click', () => openSpeed('local'));
 $('#test').addEventListener('click', test);

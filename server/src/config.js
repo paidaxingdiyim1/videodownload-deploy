@@ -63,13 +63,6 @@ const defaults = {
   namingTemplate: '{title}',
   /** 按站点分文件夹保存：downloads/<域名>/<文件> */
   siteFolders: true,
-  /**
-   * 标题整理（本地规则，无 AI）：
-   *   enabled  - 下载完成后自动识别剧集并归入 番剧/电视剧 库结构（SxxEyy + nfo）
-   *   t2s      - 繁体标题转简体（需要 server/venv 里装 opencc，没有则原样）
-   *   writeNfo - 生成 tvshow.nfo / movie.nfo（带 JAV 番号），方便 Jellyfin 刮削
-   */
-  organize: { enabled: false, t2s: true, writeNfo: true },
   /** 有 yt-dlp 时优先用它（对复杂站点更稳） */
   preferYtdlp: true,
   /** HLS 分片下完后尝试用 ffmpeg 转封装成 mp4 */
@@ -99,6 +92,10 @@ function load() {
   }
   const cfg = { ...defaults, ...onDisk };
   let changed = false;
+  if (Object.prototype.hasOwnProperty.call(cfg, 'organize')) {
+    delete cfg.organize;
+    changed = true;
+  }
   if (!cfg.token) {
     cfg.token = crypto.randomBytes(16).toString('hex');
     changed = true;
