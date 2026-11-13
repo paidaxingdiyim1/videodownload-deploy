@@ -138,16 +138,15 @@
     </section>
 
     <section class="card">
-      <h2>标题整理（剧集自动归库）</h2>
+      <h2>标题整理（AI 一键整理）</h2>
       <div class="field">
-        <label class="check"><input id="organizeToggle" type="checkbox"> 下载完成后自动整理标题</label>
-        <p class="hint">识别标题里的剧集（第XX話 / 第XX集 / ＃N / EP / 前編·後編 / SP），自动改名成 <code>系列名 - S01E01.mp4</code> 放进「番剧 / 电视剧」目录（日系进番剧），并生成 <code>.nfo</code> 元数据——Jellyfin 按「节目」类型加库即可自动分季分集。单集/电影留在原站点目录，只做繁体转简体和补 nfo。开关保存在服务器上。</p>
+        <label>一键整理（AI 识别剧集 → 番剧/电视剧库 + nfo）</label>
+        <p class="hint">点一下，服务器会用 AI 对下载目录里尚未整理的视频做结构化命名：识别剧集、聚合系列、繁转简、提取番号，自动放进「番剧 / 电视剧」目录并生成 <code>.nfo</code> 元数据（Jellyfin 按「节目」类型加库即可分季分集）。AI 配置从服务器的 cc-switch 里读取，不落盘、不入库。整理结果会明确返回「已完成 / 失败原因」。</p>
         <div class="row actions">
-          <button id="organizePreview" class="btn">预览整理计划</button>
-          <button id="organizeApply" class="btn primary">执行整理（含存量文件）</button>
-          <span id="organize-result" class="result"></span>
+          <button id="organizeAI" class="btn primary">一键整理（AI）</button>
+          <span id="organize-ai-result" class="result"></span>
         </div>
-        <pre id="organize-plan" class="info" hidden></pre>
+        <pre id="organize-ai-plan" class="info" hidden></pre>
       </div>
     </section>
 

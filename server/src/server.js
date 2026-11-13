@@ -13,9 +13,10 @@ const util = require('./util');
 const cfdl = require('./cfdl');
 const nettest = require('./nettest');
 const organize = require('./organize');
+const organizeAi = require('./organize_ai');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.6.0';
+const VERSION = '1.6.1';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -576,6 +577,18 @@ const server = http.createServer(async (req, res) => {
         } catch (e) {
           return send(res, 500, { ok: false, error: e.message }, cors);
         }
+      }
+    }
+
+    /* ---- AI 一键整理：调用本机 codex 路由，识别剧集 → 番剧/电视剧库 + nfo（幂等，返回明确状态） ---- */
+    if (pathname === '/api/organize-ai' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        // 同步执行（AI 分片 + 改名 + media-sync），完成后一次性返回结果
+        const result = organizeAi.run(cfg, { refresh: !!body.refresh });
+        return send(res, result.ok ? 200 : 500, result, cors);
+      } catch (e) {
+        return send(res, 500, { ok: false, error: e.message }, cors);
       }
     }
 

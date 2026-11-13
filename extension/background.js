@@ -1319,6 +1319,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return sendResponse({ ok: false, error: String((e && e.message) || e) });
           }
         }
+        case 'organize:ai': {
+          // AI 一键整理：服务器要跑 AI（较慢），超时给足
+          try {
+            const r = await api('/api/organize-ai', { method: 'POST', body: { refresh: !!msg.refresh }, timeout: 360000, target: msg.target || 'server' });
+            return sendResponse(r);
+          } catch (e) {
+            return sendResponse({ ok: false, error: String((e && e.message) || e) });
+          }
+        }
         case 'update:check': {
           clearUpdateBadge();
           const [b, f] = await Promise.all([checkBackend(msg.target), checkFrontend()]);
