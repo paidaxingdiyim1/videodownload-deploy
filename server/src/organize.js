@@ -368,7 +368,7 @@ function applyPlan(cfg, rows) {
     const seen = new Set();
     for (const r of rows) {
       const fileRel = (r.action === 'move' || r.action === 'rename') ? r.to : r.from;
-      if (!fileRel || r.action === 'skip') continue;
+      if (!fileRel) continue;
       const full = path.join(root, ...fileRel.split('/'));
       try {
         if (!fs.existsSync(full)) continue;
