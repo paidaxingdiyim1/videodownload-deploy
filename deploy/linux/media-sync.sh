@@ -39,7 +39,9 @@ mirror() { # $1=源目录 $2=目标目录（递归硬链；源里没有的镜像
       esac
     fi
   done
-  # 清理：目标里存在、源里没有的「硬链接文件/目录」（文件被整理改名/移库后不再残留旧名）
+  # 清理：目标里存在、源里没有的「硬链接镜像」。安全原则：media 里绝不允许持有
+  # 任何视频的「唯一副本」——只要目录里没有 nlink==1 的视频文件，就能放心删；
+  # .nfo 元数据本就是复制出来的（nlink 1），不作为是否可删的依据。
   for f in "$dst"/*; do
     [ -e "$f" ] || continue
     base=$(basename "$f")
@@ -47,10 +49,10 @@ mirror() { # $1=源目录 $2=目标目录（递归硬链；源里没有的镜像
       rm -f "$f"
       continue
     fi
-    if [ -d "$f" ] && [ ! -e "$src/$base" ] \
-       && [ -n "$(find "$f" -type f -links +1 -print -quit 2>/dev/null)" ] \
-       && [ -z "$(find "$f" -type f -links 1 -print -quit 2>/dev/null)" ]; then
-      rm -rf "$f"
+    if [ -d "$f" ] && [ ! -e "$src/$base" ]; then
+      if [ -z "$(find "$f" -type f \( -name '*.mp4' -o -name '*.mkv' -o -name '*.webm' -o -name '*.ts' \) -links 1 -print -quit 2>/dev/null)" ]; then
+        rm -rf "$f"
+      fi
     fi
   done
 }
