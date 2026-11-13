@@ -28,9 +28,9 @@ const ANIME_SITES = new Set(['hanime1']);
 function cnToInt(s) {
   s = String(s || '').trim();
   if (/^\d+$/.test(s)) return parseInt(s, 10);
-  const CN = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
-  if (s.length === 1) return CN[s] != null ? CN[s] : 0;
   if (s === '十') return 10;
+  const CN = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+  if (s.length === 1) return CN[s] != null ? CN[s] : 0;
   if (s.includes('十')) {
     const p = s.split('十');
     return (p[0] ? (CN[p[0]] || 0) : 1) * 10 + (p[1] ? (CN[p[1]] || 0) : 0);
@@ -94,8 +94,8 @@ function analyze(title, site) {
     if (ep > 0 && show) return mkSeries(show, 1, ep, site0, t);
   }
 
-  // ---- 日系「第X話/话」 ----
-  const waRe = /第\s*([0-9]+|[零一二两三四五六七八九十百]+)\s*[話话]/g;
+  // ---- 日系「第X話/话/巻/卷」 ----
+  const waRe = /第\s*([0-9]+|[零一二两三四五六七八九十百]+)\s*[話话巻卷]/g;
   let wm;
   while ((wm = waRe.exec(t))) {
     const show = stripTags(t.slice(0, wm.index));
@@ -131,8 +131,8 @@ function analyze(title, site) {
 function mkSeries(show, season, episode, site, orig) {
   const s = util.sanitizeFilename(stripTags(show)).slice(0, 80);
   if (!s) return { kind: 'movie', show: '', season: 0, episode: 0, lib: '', code: '' };
-  // 库归属：hanime1 或带「話」→ 番剧；其它 → 电视剧
-  const lib = ANIME_SITES.has(site) || /話|话/.test(orig) ? LIB_ANIME : LIB_TV;
+  // 库归属：hanime1 或带「話/话/巻/卷」→ 番剧；其它 → 电视剧
+  const lib = ANIME_SITES.has(site) || /[話话巻卷]/.test(orig) ? LIB_ANIME : LIB_TV;
   return { kind: 'series', show: s, season, episode, lib, code: '' };
 }
 
@@ -198,7 +198,7 @@ function moveFile(from, to) {
 /** 计算目标路径；movie 返回 null（原地不动） */
 function targetPath(dlDir, a, ext, curPath) {
   if (a.kind !== 'series') return null;
-  const season = String(a.season || 1).padStart(2, '0');
+  const season = String(a.season == null ? 1 : a.season).padStart(2, '0');
   const ep = String(a.episode).padStart(2, '0');
   const dir = path.join(dlDir, a.lib, a.show, `Season ${season}`);
   const base = `${a.show} - S${season}E${ep}`;
@@ -286,10 +286,14 @@ function planAll(cfg) {
       const rel = path.relative(root, full);
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name) || (depth === 0 && LIB_DIRS.has(e.name))) continue;
+        // 已经在 Season XX 结构里的剧集（如 olevod 已整理的），跳过不重复整理
+        if (/^Season\s+\d+$/i.test(e.name)) continue;
         walk(full, depth + 1);
         continue;
       }
       if (!VID_EXT.test(e.name)) continue;
+      // 已经是「系列 - SxxEyy」命名的文件跳过（避免二次移动/拆名）
+      if (/\s*-\s*S\d{1,2}E\d{1,3}\s*$/.test(e.name.replace(VID_EXT, ''))) continue;
       items.push({ full, rel, dir, site: depth >= 1 ? rel.split(path.sep)[0] : '', stem: e.name.replace(VID_EXT, ''), ext: path.extname(e.name).slice(1) });
     }
   };
