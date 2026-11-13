@@ -347,7 +347,7 @@ class TaskStore {
   }
 
   buildFinalPath(cfg, task, ext) {
-    // 站点归一：missav.ai / missav.ws → missav，douyin.com → 抖音（同时决定 Jellyfin 媒体库）
+    // 站点归一：missav.ai / missav.ws → missav，douyin.com → 抖音（决定下载目录名）
     const site = util.siteKey(task.referer || task.url)
       || (() => { try { return new URL(task.referer || task.url).hostname.replace(/^www\./, ''); } catch (_) { return ''; } })();
     const d = new Date();

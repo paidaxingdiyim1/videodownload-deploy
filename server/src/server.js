@@ -154,7 +154,7 @@ async function finalizeUpload(up) {
   fs.mkdirSync(dir, { recursive: true });
 
   // 直接按浏览器端判定好的容器保存（TS 存 .ts、fmp4 存 .mp4），不做 ffmpeg
-  // 转封装——服务器上的 ffmpeg 静态版对 mpegts→mp4 会段错误，且二者 Jellyfin 都能播
+  // 转封装——服务器上的 ffmpeg 静态版对 mpegts→mp4 会段错误，且二者都能正常播放
   const ext = up.ext === 'mp4' ? 'mp4' : (up.ext === 'ts' ? 'ts' : 'mp4');
   let candidate = path.join(dir, `${name}.${ext}`);
   let n = 1;
