@@ -12,9 +12,10 @@ const ytdlp = require('./ytdlp');
 const util = require('./util');
 const cfdl = require('./cfdl');
 const nettest = require('./nettest');
+const organize = require('./organize');
 const { probeDurations } = require('./probe');
 
-const VERSION = '1.5.27';
+const VERSION = '1.5.28';
 
 /* 日志同时写到 logs/server.log，方便窗口意外关闭后排查 */
 const LOG_DIR = path.join(config.ROOT, 'logs');
@@ -587,17 +588,61 @@ ${isHanime ? '<p class="tip">hanime1：确认页面已完整加载，且页面�
             segmentConcurrency: cfg.segmentConcurrency,
             remuxToMp4: cfg.remuxToMp4,
             preferYtdlp: cfg.preferYtdlp,
+            organize: cfg.organize,
           },
         }, cors);
       }
       if (req.method === 'POST') {
         const body = await readBody(req);
-        const allowed = ['downloadDir', 'namingTemplate', 'concurrency', 'segmentConcurrency', 'remuxToMp4', 'preferYtdlp'];
+        const allowed = ['downloadDir', 'namingTemplate', 'concurrency', 'segmentConcurrency', 'remuxToMp4', 'preferYtdlp', 'organize'];
         const patch = {};
         for (const k of allowed) if (body[k] !== undefined) patch[k] = body[k];
+        if (patch.organize && typeof patch.organize === 'object') {
+          patch.organize = { ...(cfg.organize || {}), ...patch.organize };
+        }
         Object.assign(cfg, config.update(patch));
         try { fs.mkdirSync(cfg.downloadDir, { recursive: true }); } catch (_) {}
         return send(res, 200, { ok: true, config: cfg }, cors);
+      }
+    }
+
+    /* ---- 标题整理：预览计划 / 执行存量整理 ---- */
+    if (pathname === '/api/organize') {
+      if (req.method === 'GET') {
+        try {
+          const rows = organize.planAll(cfg);
+          const summary = {
+            total: rows.length,
+            move: rows.filter((r) => r.action === 'move').length,
+            rename: rows.filter((r) => r.action === 'rename').length,
+            skip: rows.filter((r) => r.action === 'skip').length,
+            series: rows.filter((r) => r.show).length,
+            movie: rows.filter((r) => !r.show).length,
+          };
+          return send(res, 200, { ok: true, plan: rows.slice(0, 500), summary, enabled: !!(cfg.organize && cfg.organize.enabled) }, cors);
+        } catch (e) {
+          return send(res, 500, { ok: false, error: e.message }, cors);
+        }
+      }
+      if (req.method === 'POST') {
+        const body = await readBody(req);
+        if (!body.apply) {
+          return send(res, 400, { ok: false, error: '需要 {apply:true} 才会执行整理（先用 GET 预览）' }, cors);
+        }
+        try {
+          const rows = organize.planAll(cfg);
+          const stat = organize.applyPlan(cfg, rows);
+          // 同步媒体库镜像（media-sync.sh 存在时；5 分钟 cron 兜底）
+          const syncSh = path.join(config.ROOT, 'deploy', 'linux', 'media-sync.sh');
+          if (fs.existsSync(syncSh)) {
+            exec(`bash "${syncSh}"`, (err) => {
+              if (err) console.warn('[organize] media-sync 执行失败：' + err.message);
+            });
+          }
+          return send(res, 200, { ok: true, ...stat, total: rows.length }, cors);
+        } catch (e) {
+          return send(res, 500, { ok: false, error: e.message }, cors);
+        }
       }
     }
 

@@ -9,6 +9,7 @@ const dash = require('./dash');
 const direct = require('./direct');
 const ytdlp = require('./ytdlp');
 const cfdl = require('./cfdl');
+const organize = require('./organize');
 
 /**
  * 「一个站一个媒体库」的站点：目录平铺，不建 <剧名>/Season XX 结构。
@@ -312,9 +313,25 @@ class TaskStore {
       }
 
       // 落盘到最终文件名
-      const finalPath = this.buildFinalPath(cfg, task, result.ext);
+      let finalPath = this.buildFinalPath(cfg, task, result.ext);
       moveFile(result.file, finalPath);
       cleanupTmp(tmpFile, finalPath);
+
+      // 标题整理（可选项）：识别剧集 → 番剧/电视剧库 + nfo；失败不阻塞下载
+      if (cfg.organize && cfg.organize.enabled) {
+        try {
+          const site = util.siteKey(task.referer || task.url) || path.basename(path.dirname(finalPath));
+          const r = organize.place(cfg, { title: task.title, site, filePath: finalPath, ext: result.ext });
+          if (r.moved) {
+            finalPath = r.moved;
+            this.log(task, `标题整理：${r.note}`);
+          } else if (r.nfo) {
+            this.log(task, '标题整理：已写入 nfo 元数据');
+          }
+        } catch (e) {
+          this.log(task, '标题整理失败（保留原文件）：' + e.message);
+        }
+      }
 
       task.status = 'done';
       task.stage = 'done';

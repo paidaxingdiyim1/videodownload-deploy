@@ -4,17 +4,18 @@
 # 站点名由服务端 util.siteKey 归一：missav.ai/.ws → missav，douyin.com → 抖音
 #
 # 两类站点，两种归置方式：
-#   A) 独立库站点（missav / hanime1 / 抖音）：整个目录原样镜像到 /srv/share/media/<站点>/
-#      → Jellyfin 里按「电影」类型加库即可（散文件、按集数命名的文件都能看到）
+#   A) 独立库站点（missav / hanime1 / 抖音）+ 整理出的剧集库（番剧）：
+#      整个目录原样镜像到 /srv/share/media/<名称>/（含 .nfo）
+#      → Jellyfin 里按「电影」/「节目」类型加库即可
 #   B) 其它站点：
 #        <站点>/<剧名>/Season 01/xxx.mp4  -> 电视剧/<剧名>/Season 01/   （走「节目」库，有季/集）
 #        <站点>/<散文件>.mp4              -> /srv/share/media/<站点>/
 #
-# 幂等：重复跑只补新链接，不覆盖已有文件。
+# 幂等：重复跑只补新链接；源目录里已不存在（改名/移走）的硬链接镜像会被清掉。
 set -u
 SRC=${SRC:-/home/xielaoban/videodownload-deploy/downloads}
 MEDIA=${MEDIA:-/srv/share/media}
-SITE_LIBS="missav hanime1 抖音"
+SITE_LIBS="missav hanime1 抖音 番剧"
 shopt -s nullglob
 
 link_file() { # $1=源文件 $2=目标目录
@@ -24,7 +25,7 @@ link_file() { # $1=源文件 $2=目标目录
   [ -e "$dest/$base" ] || ln "$f" "$dest/$base" 2>/dev/null || cp -n "$f" "$dest/$base" 2>/dev/null
 }
 
-mirror() { # $1=源目录 $2=目标目录（递归硬链，只认视频扩展名）
+mirror() { # $1=源目录 $2=目标目录（递归硬链；源里没有的镜像（硬链接）会被清掉）
   local src=$1 dst=$2 f base
   mkdir -p "$dst" 2>/dev/null || return 0
   for f in "$src"/*; do
@@ -34,8 +35,22 @@ mirror() { # $1=源目录 $2=目标目录（递归硬链，只认视频扩展名
       mirror "$f" "$dst/$base"
     else
       case "$base" in
-        *.mp4|*.mkv|*.webm|*.ts) link_file "$f" "$dst" ;;
+        *.mp4|*.mkv|*.webm|*.ts|*.nfo) link_file "$f" "$dst" ;;
       esac
+    fi
+  done
+  # 清理：目标里存在、源里没有的「硬链接文件/目录」（文件被整理改名/移库后不再残留旧名）
+  for f in "$dst"/*; do
+    [ -e "$f" ] || continue
+    base=$(basename "$f")
+    if [ -f "$f" ] && [ ! -e "$src/$base" ] && [ "$(stat -c %h "$f" 2>/dev/null || echo 1)" -gt 1 ]; then
+      rm -f "$f"
+      continue
+    fi
+    if [ -d "$f" ] && [ ! -e "$src/$base" ] \
+       && [ -n "$(find "$f" -type f -links +1 -print -quit 2>/dev/null)" ] \
+       && [ -z "$(find "$f" -type f -links 1 -print -quit 2>/dev/null)" ]; then
+      rm -rf "$f"
     fi
   done
 }

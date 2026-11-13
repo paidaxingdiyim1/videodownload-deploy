@@ -394,7 +394,69 @@ async function openSpeed(target) {
   chrome.tabs.create({ url: speedUrl(target) });
 }
 
+/* ------------------------------ 标题整理 ------------------------------ */
+
+async function renderOrganize() {
+  const r = await send({ type: 'organize:status', target: 'server' });
+  const og = (r && r.ok && r.organize) || {};
+  $('#organizeToggle').checked = !!og.enabled;
+}
+
+async function organizePreview() {
+  const el = $('#organize-result');
+  const box = $('#organize-plan');
+  el.className = 'result';
+  el.textContent = '生成计划中…';
+  const r = await send({ type: 'organize:preview', target: 'server' });
+  if (!r || !r.ok) {
+    el.className = 'result bad';
+    el.textContent = '预览失败：' + ((r && r.error) || '服务未连接');
+    return;
+  }
+  const s = r.summary || {};
+  const lines = (r.plan || []).map((p) => {
+    const act = { move: '→', rename: '简', skip: '·' }[p.action] || '?';
+    return `${act} ${p.from}${p.to ? '  ➜  ' + p.to : ''}${p.note ? '　（' + p.note + '）' : ''}`;
+  });
+  box.hidden = false;
+  box.textContent = `共 ${s.total} 个：移动 ${s.move} · 繁转简 ${s.rename} · 不动 ${s.skip}（剧集 ${s.series} / 单集 ${s.movie}）\n\n` + lines.join('\n');
+  el.className = 'result ok';
+  el.textContent = '预览完成（执行前请先确认计划）';
+}
+
+async function organizeApply() {
+  const el = $('#organize-result');
+  if (!window.confirm('确定执行整理？文件会被改名/移动（服务器会把改名清单备份到 logs/）。\n建议先点「预览整理计划」确认。')) return;
+  el.className = 'result';
+  el.textContent = '整理中…';
+  const r = await send({ type: 'organize:apply', target: 'server' });
+  if (r && r.ok) {
+    el.className = 'result ok';
+    el.textContent = `完成：移动 ${r.moved} · 跳过 ${r.skipped} · 写入 nfo ${r.nfo}` + (r.errors && r.errors.length ? ` · ${r.errors.length} 个失败` : '');
+    organizePreview();
+  } else {
+    el.className = 'result bad';
+    el.textContent = '执行失败：' + ((r && r.error) || '服务未连接');
+  }
+}
+
 $('#save').addEventListener('click', save);
+$('#organizeToggle').addEventListener('change', async () => {
+  const el = $('#organize-result');
+  el.className = 'result';
+  el.textContent = '保存中…';
+  const r = await send({ type: 'organize:toggle', enabled: $('#organizeToggle').checked, target: 'server' });
+  if (r && r.ok) {
+    el.className = 'result ok';
+    el.textContent = (r.organize && r.organize.enabled) ? '已开启（新下载生效）' : '已关闭';
+  } else {
+    el.className = 'result bad';
+    el.textContent = '保存失败：' + ((r && r.error) || '服务未连接');
+    $('#organizeToggle').checked = !$('#organizeToggle').checked;
+  }
+});
+$('#organizePreview').addEventListener('click', organizePreview);
+$('#organizeApply').addEventListener('click', organizeApply);
 $('#speedServer').addEventListener('click', () => openSpeed('server'));
 $('#speedLocal').addEventListener('click', () => openSpeed('local'));
 $('#test').addEventListener('click', test);
@@ -415,6 +477,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderUpdate();
   renderTasks();
   renderFiles();
+  renderOrganize();
   loadDirHandle().then((h) => { dirHandle = h || null; }).catch(() => {});
   // 任务进度每 1.5s 刷新一次
   setInterval(renderTasks, 1500);

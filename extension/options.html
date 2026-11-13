@@ -138,6 +138,20 @@
     </section>
 
     <section class="card">
+      <h2>标题整理（剧集自动归库）</h2>
+      <div class="field">
+        <label class="check"><input id="organizeToggle" type="checkbox"> 下载完成后自动整理标题</label>
+        <p class="hint">识别标题里的剧集（第XX話 / 第XX集 / ＃N / EP / 前編·後編 / SP），自动改名成 <code>系列名 - S01E01.mp4</code> 放进「番剧 / 电视剧」目录（日系进番剧），并生成 <code>.nfo</code> 元数据——Jellyfin 按「节目」类型加库即可自动分季分集。单集/电影留在原站点目录，只做繁体转简体和补 nfo。开关保存在服务器上。</p>
+        <div class="row actions">
+          <button id="organizePreview" class="btn">预览整理计划</button>
+          <button id="organizeApply" class="btn primary">执行整理（含存量文件）</button>
+          <span id="organize-result" class="result"></span>
+        </div>
+        <pre id="organize-plan" class="info" hidden></pre>
+      </div>
+    </section>
+
+    <section class="card">
       <h2>说明</h2>
       <ul class="notes">
         <li>支持 HLS（m3u8，含 AES-128 加密分片）、DASH、直链 MP4/WebM 等。</li>
