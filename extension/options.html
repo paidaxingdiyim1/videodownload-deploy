@@ -8,7 +8,46 @@
 <body>
   <main class="wrap">
     <h1>网页视频下载器 · 设置</h1>
-    <p class="lead">扩展负责识别网页里的视频流，真正的下载和解密由下载服务完成。请先在服务所在电脑上运行 <code>start.bat</code>（本机）或 <code>start-lan.bat</code>（局域网服务器）。</p>
+    <p class="lead">扩展只负责识别网页里的视频流，真正的下载 / 解密 / 合并由「下载服务」完成。服务没启动时点下载一定失败——先照下面第一张卡片把服务跑起来。</p>
+
+    <section class="card" id="service">
+      <h2>启动下载服务</h2>
+      <div class="field">
+        <div class="row">
+          <span class="grow ver" id="svc-state">检测中…</span>
+          <button id="svc-recheck" class="btn sm">重新检测</button>
+        </div>
+        <p class="hint">浏览器扩展不能替你启动本地程序（Chrome 安全限制），所以服务要么双击脚本开一次，要么装成开机自启——两种都只做一次。</p>
+      </div>
+
+      <div class="field">
+        <label>① 本机（保存到这台电脑时用）</label>
+        <ul class="steps">
+          <li>双击项目根目录的 <code>start.bat</code>，弹出的黑窗口<b>保持打开</b>（关掉即停止服务）。</li>
+          <li>或者在命令行里直接跑：</li>
+        </ul>
+        <div class="cmd"><span>node server/src/server.js</span><button class="btn sm" data-copy="node server/src/server.js">复制</button></div>
+        <p class="hint">打包版更省事：双击 <code>网页视频下载器.exe</code>（自带 Node，不用装环境，启动后会自动打开浏览器控制台）。</p>
+      </div>
+
+      <div class="field">
+        <label>② 局域网服务器（别的电脑的扩展也连它）</label>
+        <div class="cmd"><span>start-lan.bat</span><button class="btn sm" data-copy="start-lan.bat">复制</button></div>
+        <div class="cmd"><span>bash deploy/linux/install.sh</span><button class="btn sm" data-copy="bash deploy/linux/install.sh">复制</button></div>
+        <div class="cmd"><span>powershell -ExecutionPolicy Bypass -File deploy\windows-service\install-service.ps1</span><button class="btn sm" data-copy="powershell -ExecutionPolicy Bypass -File deploy\windows-service\install-service.ps1">复制</button></div>
+        <p class="hint"><code>start-lan.bat</code> 是临时开一次（自动加防火墙放行 8765）；后两条是<b>常驻部署</b>——Linux 用 crontab、Windows 用计划任务，开机自启、崩溃自动重启，装完不用再开窗口。</p>
+      </div>
+
+      <div class="field">
+        <label>③ 启动后看窗口里这三样</label>
+        <ul class="notes">
+          <li><b>地址</b>：默认 <code>http://127.0.0.1:8765</code>；端口被占用会自动 +1，以窗口打印的地址为准。</li>
+          <li><b>Token</b>：回到下面「服务器 / 本机服务」点「自动配对」就能自动取；取不到就把窗口里的 Token 粘进去。</li>
+          <li><b>依赖</b>：yt-dlp / ffmpeg 是否就绪（没有也能下 m3u8 和直链，只是不自动转 mp4）。</li>
+        </ul>
+        <p class="hint">服务在跑时，浏览器打开 <code>http://127.0.0.1:8765</code> 能看到状态页、任务队列和下载目录。</p>
+      </div>
+    </section>
 
     <section class="card">
       <h2>保存位置</h2>

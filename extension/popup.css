@@ -121,3 +121,11 @@ body {
 .btn.primary { background: #2b6cff; border-color: #2b6cff; color: #fff; }
 .btn.primary:hover { background: #1f5bea; }
 .hint { padding: 8px 14px; font-size: 11px; color: #8a5b00; background: #fff7e6; }
+
+/* 下载服务未启动时的提示条（详情见设置页「启动下载服务」） */
+.svc-hint {
+  display: flex; align-items: center; gap: 8px; margin: 8px 14px 0; padding: 7px 10px;
+  border-radius: 7px; background: #fdecec; color: #a71d22; font-size: 11px; line-height: 1.5;
+}
+.svc-hint .svc-txt { flex: 1 1 auto; min-width: 0; }
+.svc-hint .lnk { color: #2b6cff; white-space: nowrap; }

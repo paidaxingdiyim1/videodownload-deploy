@@ -133,11 +133,23 @@ async function checkHealth() {
   if (r && r.ok) {
     el.className = 'status ok';
     el.querySelector('.stxt').textContent = `${where}服务已连接`;
+    renderServiceHint(r);
   } else {
     el.className = 'status bad';
     el.querySelector('.stxt').textContent = `${where}服务未连接`;
+    renderServiceHint(r);
   }
   return r;
+}
+
+/** 服务没连上时，在弹窗顶部露出「怎么启动」入口（详细步骤在设置页的「启动下载服务」卡片） */
+function renderServiceHint(r) {
+  const box = $('#svc-hint');
+  if (!box) return;
+  if (r && r.ok) { box.hidden = true; return; }
+  const where = saveTarget === 'local' ? '本机' : '服务器';
+  $('#svc-hint-txt').textContent = `${where}下载服务未启动，点「下载」会失败`;
+  box.hidden = false;
 }
 
 function renderTarget() {
@@ -353,6 +365,9 @@ async function init() {
     chrome.tabs.create({ url: base + '/speed' + (tok ? '?token=' + encodeURIComponent(tok) : '') });
   });
   $('#options').addEventListener('click', () => chrome.runtime.openOptionsPage());
+  $('#svc-start').addEventListener('click', () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('options.html#service') });
+  });
   $('#parse-btn').addEventListener('click', doParse);
   $('#parse-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') doParse(); });
 

@@ -92,6 +92,7 @@ async function test() {
   const okCount = (srv?.ok ? 1 : 0) + (loc?.ok ? 1 : 0);
   el.className = okCount ? 'result ok' : 'result bad';
   el.textContent = okCount ? `已连接 ${okCount} 个服务（未连接的不影响已连接的那个）` : '两个服务都没连上';
+  renderServiceState();
 }
 
 async function pairOne(target, el) {
@@ -257,6 +258,41 @@ async function doUpdateFrontend() {
   }
 }
 
+/* ------------------------------ 启动下载服务 ------------------------------ */
+
+/** 检测「本机 / 服务器」两个下载服务是否已启动，结果直接显示在启动引导卡片上 */
+async function renderServiceState() {
+  const el = $('#svc-state');
+  if (!el) return;
+  el.classList.remove('svc-ok', 'svc-bad');
+  el.textContent = '检测中…';
+  const [loc, srv] = await Promise.all([
+    send({ type: 'health', target: 'local' }),
+    send({ type: 'health', target: 'server' }),
+  ]);
+  const okLoc = !!(loc && loc.ok);
+  const okSrv = !!(srv && srv.ok);
+  el.textContent = `本机 ${okLoc ? '✓ 已启动' : '✗ 未启动'} · 服务器 ${okSrv ? '✓ 已启动' : '✗ 未启动'}`;
+  el.classList.add(okLoc || okSrv ? 'svc-ok' : 'svc-bad');
+}
+
+/** 启动命令旁的「复制」按钮 */
+function bindCopyCommands() {
+  document.querySelectorAll('[data-copy]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const text = b.dataset.copy || '';
+      const old = b.textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        b.textContent = '已复制';
+      } catch (_) {
+        b.textContent = '复制失败';
+      }
+      setTimeout(() => { b.textContent = old; }, 1200);
+    });
+  });
+}
+
 /* ------------------------------ 下载中心 ------------------------------ */
 
 const ST_LABEL = {
@@ -398,6 +434,7 @@ $('#save').addEventListener('click', save);
 $('#speedServer').addEventListener('click', () => openSpeed('server'));
 $('#speedLocal').addEventListener('click', () => openSpeed('local'));
 $('#test').addEventListener('click', test);
+$('#svc-recheck').addEventListener('click', renderServiceState);
 $('#pairServer').addEventListener('click', () => pairOne('server', $('#test-result')));
 $('#pairLocal').addEventListener('click', () => pairOne('local', $('#test-result')));
 $('#checkFrontend').addEventListener('click', renderUpdate);
@@ -413,6 +450,8 @@ $('#tasksClear').addEventListener('click', async () => {
 document.addEventListener('DOMContentLoaded', () => {
   load();
   renderUpdate();
+  renderServiceState();
+  bindCopyCommands();
   renderTasks();
   renderFiles();
   loadDirHandle().then((h) => { dirHandle = h || null; }).catch(() => {});

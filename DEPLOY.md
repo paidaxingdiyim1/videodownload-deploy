@@ -159,6 +159,7 @@ docker logs videodownload            # 看 Token
 ## 客户端（局域网内各电脑的浏览器扩展）
 
 1. 打开 `chrome://extensions` → 开发者模式 → 加载已解压的扩展程序 → 选 `extension` 文件夹
+   （也可以加载到任意固定目录，比如 `D:\Program Files\videoload`；以后设置页「更新前端」直接把新版本写进那个目录）
 2. 点扩展图标 → **设置**：
    - **默认保存位置**：选「服务器」「本机」或「每次下载时询问」
    - **服务器地址**：`http://yourserver:8765`（或启动日志里打印的 IP 地址）
